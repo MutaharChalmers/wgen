@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "wgen"
+version = "0.0.1"
+description = "Yet another statistical weather generator"
+authors = [
+           { name = "Mutahar Chalmers", email = "mutahar.chalmers@gmail.com" },
+]
+license = { file = "LICENSE" }
+readme = "README.md"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering",
+]
+requires-python = ">=3.8"
+dependencies = [ "numpy>=1.18", "scipy>=1.10", "xarray>=2023.01.0",
+                 "zarr>=2.18", "scikit-learn>=1.0", "climperiods>=0.0.2",
+                 "ersst5tools>=0.0.1", "era5tools>=0.0.4", "seas5tools>=0.0.9",
+                 "kdetools>=0.1.8", "scskde>=0.1.0"
+]
+
+[project.urls]
+"Homepage" = "https://github.com/MutaharChalmers/wgen"
