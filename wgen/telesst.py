@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+import os
 import datetime
 import numpy as np
 import pandas as pd
@@ -40,7 +41,7 @@ class TeleSST():
         self.PCs = None
         self.varexp = None
 
-    def load_anoms(self, inpath, dataset, year_range):
+    def calc_anoms(self, inpath, dataset, year_range):
         """Load SST data and calculate anomalies.
 
         Parameters
@@ -73,7 +74,7 @@ class TeleSST():
             print('dataset must be one of ERA5 or ERSST5')
             return None
 
-    def load_anoms_forecast(self, inpath, fyear, fmonth, clim_year_range=(1993, 2016)):
+    def calc_anoms_forecast(self, inpath, fyear, fmonth, clim_year_range=(1993, 2016)):
         """Load forecast SEAS5 SST data and calculate anomalies.
 
         Parameters
@@ -104,7 +105,7 @@ class TeleSST():
 
         Parameters
         ----------
-            da : xarray DataArray
+            da : DataArray
                 DataArray with dims including
                 ['latitude','longitude','year','month'].
         """
@@ -130,6 +131,14 @@ class TeleSST():
             pca.fit(X)
             EOFs[m] = pd.DataFrame(pca.components_, columns=X.columns)
             PCs[m] = X @ EOFs[m].T
+
+            # Orient EOFs of successive months consistently for ease of interpretation
+            if m > 1:
+                ix = EOFs[m].columns.intersection(EOFs[m-1].columns)
+                sgn = np.sign(np.diag(EOFs[m][ix] @ EOFs[m-1][ix].T))
+                EOFs[m] = EOFs[m] * sgn[:,None]
+                PCs[m] = PCs[m] * sgn[None,:]
+
             varexp[m] = pca.explained_variance_ratio_
 
         # Convert to DataFrames
@@ -140,17 +149,60 @@ class TeleSST():
         self.varexp = pd.DataFrame(varexp).rename_axis('month', axis=1
                                                        ).rename_axis('pc', axis=0)
 
+    def to_file(self, outpath, desc):
+        """Save EOFs and PCs to disk.
+
+        Parameters
+        ----------
+            outpath : str
+                Output path.
+            desc : str
+                Description of model.
+        """
+        self.EOFs.to_parquet(os.path.join(outpath, f'EOFs_{desc}.parquet'))
+        self.PCs.to_parquet(os.path.join(outpath, f'PCs_{desc}.parquet'))
+        self.varexp.to_parquet(os.path.join(outpath, f'varexp_{desc}.parquet'))
+
+    def from_file(self, inpath, desc):
+        """Load model from disk.
+
+        Parameters
+        ----------
+            inpath : str
+                Input path.
+            desc : str
+                Description of model.
+        """
+        self.EOFs = pd.read_parquet(os.path.join(inpath, f'EOFs_{desc}.parquet'))
+        self.PCs = pd.read_parquet(os.path.join(inpath, f'PCs_{desc}.parquet'))
+        self.varexp = pd.read_parquet(os.path.join(inpath, f'varexp_{desc}.parquet'))
+
+        # Calculate weights
+        lats = self.EOFs.columns.unique(level='latitude').to_series()
+        if self.weighting == 'coslat':
+            self.wts_ss = np.cos(np.deg2rad(lats))
+        elif self.weighting == 'rootcoslat':
+            self.wts_ss = np.sqrt(np.cos(np.deg2rad(lats)))
+        else:
+            self.wts_ss = (lats/lats).fillna(1)
+        self.wts_da = self.wts_ss.to_xarray()
+
     def project(self, da, forecast=True):
         """Project new data onto EOFs previously fitted to get new PCs.
 
         Parameters
         ----------
-            da : xarray DataArray
+            da : DataArray
                 DataArray with dims including
                 ['latitude','longitude','year','month'].
             forecast : bool
                 Flag if da is a forecast or not. Makes standard assumptions
                 about the structure of a processed SEAS5 forecast.
+
+        Returns
+        -------
+            PCs_proj : DataFrame
+                Projected PCs.
         """
 
         # Subset latitudes
@@ -168,7 +220,7 @@ class TeleSST():
 
         if forecast:
             fmonth = int(da['fmonth'])
-            fyear = int(da['year'].min())
+            fyear = int(da['year'].min()) if fmonth < 12 else int(da['year'])-1
             lead_months = np.arange(1, 7)
             months = (fmonth + lead_months - 1) % 12 + 1
             years = fyear + (fmonth + lead_months - 1) // 12

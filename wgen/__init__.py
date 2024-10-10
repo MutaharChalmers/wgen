@@ -1,2 +1,2 @@
 from .telesst import TeleSST
-from .wgen import WGen
+from .weather import Weather, Model
