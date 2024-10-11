@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "wgen"
-version = "0.0.1"
+version = "0.0.2"
 description = "Yet another statistical weather generator"
 authors = [
            { name = "Mutahar Chalmers", email = "mutahar.chalmers@gmail.com" },

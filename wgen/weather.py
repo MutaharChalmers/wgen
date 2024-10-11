@@ -33,8 +33,8 @@ class Weather():
         self.PCs = None
         self.varexp = None
 
-    def calc_anoms(self, inpath, fname, year_range, N_KDE=100, buffer_bws=3):
-        """Load weather data for a single region-variable and standardise.
+    def calc_anoms(self, weather_data, year_range, N_KDE=100, buffer_bws=3):
+        """Calculate anomalies from weather data for a single region-variable.
 
         Data is first detrended by removing a rolling N-year climatology
         (N = 30 years centred is the NOAA standard) then it is converted to
@@ -44,10 +44,8 @@ class Weather():
 
         Parameters
         ----------
-        inpath : str
-            Path to historic weather data.
-        fname : str
-            Filename.
+        weather_data : DataFrame
+            DataFrame with (year, month) MultiIndex, and qid (quadtreeID) columns.
         year_range : (int, int)
             Year range to process.
         N_KDE : int, optional
@@ -58,7 +56,7 @@ class Weather():
         """
 
         # Load the raw weather data and pivot to cell-months
-        data = pd.read_parquet(os.path.join(inpath, fname)).unstack('month')
+        data = weather_data.unstack('month')
         self.cols_all = data.columns
 
         #  Filter out cell-months if IQR == 0, i.e. no interannual variability
@@ -126,13 +124,6 @@ class Weather():
         minima_filt = (minima>0) & cq75
         peaks = np.where(maxima_filt, np.cumsum(maxima_filt, axis=0), 0)
         troughs = np.where(minima_filt, -np.cumsum(minima_filt, axis=0), 0)
-
-        #self.minima = minima
-        #self.maxima = maxima
-        #self.minima_filt = minima_filt
-        #self.maxima_filt = maxima_filt
-        #self.sclims = clims
-        #self.seas_maxima_peaks = peaks
 
         # Buffer months around extrema only if # seasons <= max_nseas
         self.nseas = pd.Series(np.count_nonzero(peaks, axis=0),
@@ -258,7 +249,6 @@ class Weather():
             return anoms + self.clims
         else:
             return anoms + self.clims.loc[clim_year]
-        #return gen.fillna(self.clims).stack('month')
 
     def to_file(self, outpath, desc):
         """Save model to disk.
@@ -304,7 +294,7 @@ class Weather():
         self.PCs = pd.read_parquet(os.path.join(inpath, desc, 'PCs.parquet'))
 
     def to_oasis(self, haz_df, outpath, kind='stoc', bounds=(0, 0, 0.5, 1),
-                 nbins=51, qid_res=5/60, ):
+                 nbins=51, qid_res=5/60):
         """Convert data to Oasis hazard format.
 
         This method is consistent with Oasis ODS v{x.xx} and produces 4 tables:
@@ -464,8 +454,6 @@ class Model():
         weatherPCs = pd.concat({m: multiPCs.xs(m, level='month') @
                                 self.multiEOFs.xs(m, level='month')
                                 for m in months}, names=['month'])
-        #bias_fac = (self.weatherPCs.reindex(months, level='month').groupby(level='month').std()/
-        #            weatherPCs.groupby(level='month').std())
 
         # Bias correct standard deviation
         if bias_correct:
