@@ -60,7 +60,7 @@ class Weather():
         self.cols_all = data.columns
 
         #  Filter out cell-months if IQR == 0, i.e. no interannual variability
-        iqrs = np.diff(np.quantile(data, [0.25, 0.75], axis=0), axis=0)[0]
+        iqrs = np.diff(np.nanquantile(data, [0.25, 0.75], axis=0), axis=0)[0]
         self.cols = data.columns[iqrs>0]
         self.data = data[self.cols]
 
