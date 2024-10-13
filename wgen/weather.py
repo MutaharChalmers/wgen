@@ -29,9 +29,6 @@ class Weather():
 
         self.tqdm = tqdm
         self.now = datetime.datetime.now()
-        self.EOFs = None
-        self.PCs = None
-        self.varexp = None
 
     def calc_anoms(self, weather_data, year_range, N_KDE=100, buffer_bws=3):
         """Calculate anomalies from weather data for a single region-variable.
@@ -159,7 +156,7 @@ class Weather():
         EOFs, PCs, varexp = {}, {}, {}
         pca = PCA()
         for m in tqdm(range(1, 13), disable=self.tqdm):
-            X = self.zin.xs(m, level='month', axis=1) * self.wts
+            X = self.zin.xs(m, level='month', axis=1).dropna() * self.wts
             pca.fit(X)
             EOFs[m] = pd.DataFrame(pca.components_, columns=X.columns)
             PCs[m] = X @ EOFs[m].T
