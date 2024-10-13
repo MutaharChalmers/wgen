@@ -172,8 +172,7 @@ class Weather():
         # Convert to DataFrames
         self.EOFs = pd.concat(EOFs, names=['month','qid'], axis=1).rename_axis('pc')
         self.PCs = pd.concat(PCs, names=['month']).rename_axis('pc', axis=1)
-        self.varexp = varexp#pd.concat(varexp).rename_axis('month', axis=1
-                      #                              ).rename_axis('pc', axis=0)
+        self.varexp = pd.concat(varexp, axis=1, names=['month']).rename_axis('pc', axis=0)
 
     def PCs_to_anoms(self, PCs, outpath=None, regvar=None):
         """Calculate monthly standard anomalies from PCs using existing EOFs.
@@ -405,7 +404,7 @@ class Model():
         multiEOFs, multiPCs, varexp = {}, {}, {}
         pca = PCA()
         for m in range(1, 13):
-            X = self.weatherPCs.xs(m, level='month')
+            X = self.weatherPCs.xs(m, level='month').dropna()
             pca.fit(X)
             multiEOFs[m] = pd.DataFrame(pca.components_, columns=X.columns)
             multiPCs[m] = X @ multiEOFs[m].T
@@ -424,8 +423,7 @@ class Model():
                                   ).reorder_levels(['year','month']
                                                    ).sort_index(
                                                    ).rename_axis('pc_multi', axis=1)
-        self.varexp = pd.DataFrame(varexp).rename_axis('month', axis=1
-                                                       ).rename_axis('pc_multi', axis=0)
+        self.varexp = pd.concat(varexp, axis=1, names=['month']).rename_axis('pc_multi', axis=0)
         self.N_multiPCs = self.multiPCs.shape[1]
 
     def from_multiPCs(self, multiPCs, bias_correct=True, whiten=True):
