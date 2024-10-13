@@ -160,7 +160,7 @@ class Weather():
             pca.fit(X)
             EOFs[m] = pd.DataFrame(pca.components_, columns=X.columns)
             PCs[m] = X @ EOFs[m].T
-            varexp[m] = pca.explained_variance_ratio_
+            varexp[m] = pd.Series(pca.explained_variance_ratio_)
 
             # Align EOFs of successive months for ease of interpretation
             if m > 1:
@@ -172,8 +172,8 @@ class Weather():
         # Convert to DataFrames
         self.EOFs = pd.concat(EOFs, names=['month','qid'], axis=1).rename_axis('pc')
         self.PCs = pd.concat(PCs, names=['month']).rename_axis('pc', axis=1)
-        self.varexp = pd.DataFrame(varexp).rename_axis('month', axis=1
-                                                       ).rename_axis('pc', axis=0)
+        self.varexp = pd.concat(varexp).rename_axis('month', axis=1
+                                                    ).rename_axis('pc', axis=0)
 
     def PCs_to_anoms(self, PCs, outpath=None, regvar=None):
         """Calculate monthly standard anomalies from PCs using existing EOFs.
