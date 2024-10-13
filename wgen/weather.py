@@ -74,13 +74,13 @@ class Weather():
         self.clims = pd.concat({yft[0]: clims[yft[1:]]
                                 for yft in clims_map.itertuples(name=None)},
                                 names=['year'], axis=1).T
-        anoms = self.data.reindex(self.clims.index) - self.clims[self.cols]
+        self.anoms = self.data.reindex(self.clims.index) - self.clims[self.cols]
 
         # Fit 1D KDEs to each cell-month detrended anomalies and transform
         self.ecdf = kt.kdecdf(N=N_KDE, buffer_bws=buffer_bws)
-        self.ecdf.fit(anoms)
-        anoms_tr = pd.DataFrame(st.norm.ppf(self.ecdf.transform(anoms)),
-                                index=anoms.index, columns=anoms.columns)
+        self.ecdf.fit(self.anoms)
+        anoms_tr = pd.DataFrame(st.norm.ppf(self.ecdf.transform(self.anoms)),
+                                index=self.anoms.index, columns=self.anoms.columns)
 
         # Zero-mean data by month prior to PCA
         self.anoms_tr_mean = anoms_tr.mean()

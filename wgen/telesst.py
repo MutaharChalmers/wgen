@@ -9,7 +9,6 @@ import xarray as xr
 from tqdm.auto import tqdm
 
 # ML functions
-from sklearn.decomposition import PCA
 from sklearn.neighbors import BallTree
 
 # Custom libraries for working with climate
@@ -124,13 +123,14 @@ class TeleSST():
 
         # Calculate EOFs and PCs for each month
         EOFs, PCs, varexp = {}, {}, {}
-        pca = PCA()
+
         for m in range(1, 13):
             da_month = da.sel(month=m) * self.wts_da
             X = da_month.to_series().dropna().unstack(['latitude','longitude'])
-            pca.fit(X)
-            EOFs[m] = pd.DataFrame(pca.components_, columns=X.columns)
+            _, s, v = np.linalg.svd(X, full_matrices=False)
+            EOFs[m] = pd.DataFrame(v, columns=X.columns)
             PCs[m] = X @ EOFs[m].T
+            varexp[m] = pd.Series(s**2/(s**2).sum(), name=m)
 
             # Orient EOFs of successive months consistently for ease of interpretation
             if m > 1:
@@ -139,15 +139,12 @@ class TeleSST():
                 EOFs[m] = EOFs[m] * sgn[:,None]
                 PCs[m] = PCs[m] * sgn[None,:]
 
-            varexp[m] = pca.explained_variance_ratio_
-
         # Convert to DataFrames
         self.EOFs = pd.concat(EOFs, names=['month','pc'])
         self.PCs = pd.concat(PCs, names=['month']
                              ).reorder_levels(['year','month']
                                               ).sort_index().rename_axis('pc', axis=1)
-        self.varexp = pd.DataFrame(varexp).rename_axis('month', axis=1
-                                                       ).rename_axis('pc', axis=0)
+        self.varexp = pd.concat(varexp, axis=1, names=['month']).rename_axis('pc', axis=0)
 
     def to_file(self, outpath, desc):
         """Save EOFs and PCs to disk.
