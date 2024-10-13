@@ -7,7 +7,6 @@ import numpy as np
 import pandas as pd
 import scipy.stats as st
 import scipy.special as ss
-from sklearn.decomposition import PCA
 from tqdm.auto import tqdm
 
 # Custom libraries
@@ -154,13 +153,13 @@ class Weather():
 
         # Calculate EOFs and PCs for each month
         EOFs, PCs, varexp = {}, {}, {}
-        pca = PCA()
+
         for m in tqdm(range(1, 13), disable=self.tqdm):
             X = self.zin.xs(m, level='month', axis=1).dropna() * self.wts
-            pca.fit(X)
-            EOFs[m] = pd.DataFrame(pca.components_, columns=X.columns)
+            _, s, v = np.linalg.svd(X, full_matrices=False)
+            EOFs[m] = pd.DataFrame(v, columns=X.columns)
             PCs[m] = X @ EOFs[m].T
-            varexp[m] = pd.Series(pca.explained_variance_ratio_, name=m)
+            varexp[m] = pd.Series(s**2/(s**2).sum(), name=m)
 
             # Align EOFs of successive months for ease of interpretation
             if m > 1:
@@ -396,19 +395,19 @@ class Model():
         self.tele = TeleSST()
         self.tele.from_file(self.telehist_inpath, name)
 
-    def to_multiPCs(self):
+    def PCs_to_multiPCs(self):
         """Calculate EOFs and PCs of multiple region-variables.
         """
 
         # Calculate EOFs and PCs for each month
         multiEOFs, multiPCs, varexp = {}, {}, {}
-        pca = PCA()
+
         for m in range(1, 13):
             X = self.weatherPCs.xs(m, level='month').dropna()
-            pca.fit(X)
-            multiEOFs[m] = pd.DataFrame(pca.components_, columns=X.columns)
+            _, s, v = np.linalg.svd(X, full_matrices=False)
+            multiEOFs[m] = pd.DataFrame(v, columns=X.columns)
             multiPCs[m] = X @ multiEOFs[m].T
-            varexp[m] = pca.explained_variance_ratio_
+            varexp[m] = pd.Series(s**2/(s**2).sum(), name=m)
 
             # Align EOFs of successive months for ease of interpretation
             if m > 1:
@@ -426,7 +425,7 @@ class Model():
         self.varexp = pd.concat(varexp, axis=1, names=['month']).rename_axis('pc_multi', axis=0)
         self.N_multiPCs = self.multiPCs.shape[1]
 
-    def from_multiPCs(self, multiPCs, bias_correct=True, whiten=True):
+    def multiPCs_to_PCs(self, multiPCs, bias_correct=True, whiten=True):
         """Calculate individual PCs from multiPCs.
 
         Parameters
