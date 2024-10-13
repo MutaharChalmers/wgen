@@ -132,10 +132,10 @@ class TeleSST():
             PCs[m] = X @ EOFs[m].T
             varexp[m] = pd.Series(s**2/(s**2).sum(), name=m)
 
-            # Orient EOFs of successive months consistently for ease of interpretation
+            # Align EOFs of successive months for ease of interpretation
             if m > 1:
-                ix = EOFs[m].columns.intersection(EOFs[m-1].columns)
-                sgn = np.sign(np.diag(EOFs[m][ix] @ EOFs[m-1][ix].T))
+                cols = EOFs[m].columns.intersection(EOFs[m-1].columns)
+                sgn = np.sign(np.diag(EOFs[m][cols] @ EOFs[m-1][cols].T))
                 EOFs[m] = EOFs[m] * sgn[:,None]
                 PCs[m] = PCs[m] * sgn[None,:]
 
