@@ -197,9 +197,7 @@ class Weather():
         if outpath is None:
             self.zgen = pd.concat({m: PCs.xs(m, level='month').dropna(axis=1) @ self.EOFs.xs(m, level='month', axis=1).dropna()
                                    for m in tqdm(months, disable=self.tqdm)}, names=['month'], axis=1
-                                   ).reorder_levels(['qid','month'], axis=1
-                                                    ).reindex(self.cols, axis=1
-                                                              ).add(self.anoms_tr_mean)
+                                   ).reorder_levels(['qid','month'], axis=1).reindex(self.cols, axis=1)
             return self.zgen
         elif regvar is not None:
             # Stochastic or forecast-stochastic run
@@ -209,8 +207,7 @@ class Weather():
                     zgen = pd.concat({m: PCs_batch.xs(m, level='month') @ self.EOFs.xs(m, level='month', axis=1)
                                       for m in tqdm(months, disable=self.tqdm)}, names=['month'], axis=1
                                       ).reorder_levels(['qid','month'], axis=1
-                                                       ).reindex(self.cols, axis=1
-                                                                 ).add(self.anoms_tr_mean).stack('month')
+                                                       ).reindex(self.cols, axis=1).stack('month')
                     zgen.to_parquet(os.path.join(outpath, f'{regvar}_zgen_batch{batch:03}.parquet'))
         else:
             print('Both or neither outpath and regvar should be None.')
@@ -236,7 +233,7 @@ class Weather():
                 Generated weather from individual region-variables.
         """
         # Invert the transform
-        anoms = pd.DataFrame(self.ecdf.inverse(np.clip(ss.ndtr(z),
+        anoms = pd.DataFrame(self.ecdf.inverse(np.clip(ss.ndtr(z.add(self.anoms_tr_mean)),
                                                a_min=self.ecdf.cdfs.min(axis=0),
                                                a_max=self.ecdf.cdfs.max(axis=0))),
                                                index=z.index, columns=z.columns)
