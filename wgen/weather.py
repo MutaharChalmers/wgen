@@ -181,9 +181,9 @@ class Weather():
             PCs : DataFrame
                 PCs of a single region-weather variable at monthly resolution.
             outpath : str, optional
-                File path to write output. If None, values are return
+                File path for output. If None, values are returned.
             regvar : str, optional
-                Region-variable name for writing to file.
+                Region-variable description for filename.
 
         Returns
         -------
@@ -195,7 +195,7 @@ class Weather():
         # Combine EOFs and PCs and add back mean of transformed anomalies
         months = PCs.index.unique(level='month')
         if outpath is None:
-            self.zgen = pd.concat({m: PCs.xs(m, level='month') @ self.EOFs.xs(m, level='month', axis=1)
+            self.zgen = pd.concat({m: PCs.xs(m, level='month').dropna(axis=1) @ self.EOFs.xs(m, level='month', axis=1).dropna()
                                    for m in tqdm(months, disable=self.tqdm)}, names=['month'], axis=1
                                    ).reorder_levels(['qid','month'], axis=1
                                                     ).reindex(self.cols, axis=1
@@ -360,7 +360,7 @@ class Model():
             Path to processed historic weather data.
         telehist_inpath : str
             Path to processed historic teleconnection data.
-        telefore_inpath : str
+        telefore_inpath : str, optional
             Path to processed historic teleconnection data.
         """
 
