@@ -36,9 +36,6 @@ class TeleSST():
         self.weighting = weighting
 
         self.now = datetime.datetime.now()
-        self.EOFs = None
-        self.PCs = None
-        self.varexp = None
 
     def calc_anoms(self, inpath, dataset, year_range):
         """Load SST data and calculate anomalies.
@@ -127,10 +124,10 @@ class TeleSST():
         for m in range(1, 13):
             da_month = da.sel(month=m) * self.wts_da
             X = da_month.to_series().dropna().unstack(['latitude','longitude'])
-            _, s, v = np.linalg.svd(X, full_matrices=False)
-            EOFs[m] = pd.DataFrame(v, columns=X.columns)
+            _, S, V = np.linalg.svd(X, full_matrices=False)
+            EOFs[m] = pd.DataFrame(V, columns=X.columns)
             PCs[m] = X @ EOFs[m].T
-            varexp[m] = pd.Series(s**2/(s**2).sum(), name=m)
+            varexp[m] = pd.Series(S**2/(S**2).sum(), name=m)
 
             # Align EOFs of successive months for ease of interpretation
             if m > 1:

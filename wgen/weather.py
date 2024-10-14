@@ -275,7 +275,7 @@ class Weather():
         cols_df = pd.read_csv(os.path.join(inpath, desc, 'columns.csv'))
         self.cols = pd.MultiIndex.from_frame(cols_df)
         self.clims = pd.read_parquet(os.path.join(inpath, desc, 'clims.parquet'))
-        self.ecdf = kt.kdecdf()
+        #self.ecdf = kt.kdecdf()
         #self.ecdf.from_file(os.path.join(inpath, desc), 'ecdf')
         self.Zmean = pd.read_parquet(os.path.join(inpath, desc, 'Zmean.parquet')).stack('month')
         self.EOFs = pd.read_parquet(os.path.join(inpath, desc, 'EOFs.parquet'))
