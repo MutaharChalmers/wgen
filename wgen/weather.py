@@ -55,9 +55,9 @@ class Weather():
         data = weather_data.unstack('month')
         self.cols_all = data.columns
 
-        #  Filter out cell-months if IQR == 0, i.e. no interannual variability
-        iqrs = np.diff(np.nanquantile(data, [0.25, 0.75], axis=0), axis=0)[0]
-        self.cols = data.columns[iqrs>0]
+        #  Filter out zero variance cell-months
+        variance = np.nanvar(data, axis=0)
+        self.cols = data.columns[variance>0]
         self.data = data[self.cols]
 
         if year_range[1] > self.now.year:
@@ -79,12 +79,12 @@ class Weather():
         # Fit 1D KDEs to each cell-month detrended anomalies and transform
         self.ecdf = kt.kdecdf(N=N_KDE, buffer_bws=buffer_bws)
         self.ecdf.fit(self.anoms)
-        anoms_tr = pd.DataFrame(st.norm.ppf(self.ecdf.transform(self.anoms)),
-                                index=self.anoms.index, columns=self.anoms.columns)
+        Z = pd.DataFrame(st.norm.ppf(self.ecdf.transform(self.anoms)),
+                         index=self.anoms.index, columns=self.anoms.columns)
 
         # Zero-mean data by month prior to PCA
-        self.anoms_tr_mean = anoms_tr.mean()
-        self.zin = anoms_tr - self.anoms_tr_mean
+        self.Zmean = Z.mean()
+        self.Zin = Z - self.Zmean
 
     def clims_to_seasons(self, clim_year, buffer=(1, 1), max_nseas=2):
         """Identify seasons using changes in monthly climatology.
@@ -155,11 +155,11 @@ class Weather():
         EOFs, PCs, varexp = {}, {}, {}
 
         for m in tqdm(range(1, 13), disable=self.tqdm):
-            X = self.zin.xs(m, level='month', axis=1).dropna() * self.wts
-            _, s, v = np.linalg.svd(X, full_matrices=False)
-            EOFs[m] = pd.DataFrame(v, columns=X.columns)
+            X = self.Zin.xs(m, level='month', axis=1).dropna() * self.wts
+            _, S, V = np.linalg.svd(X, full_matrices=False)
+            EOFs[m] = pd.DataFrame(V, columns=X.columns)
             PCs[m] = X @ EOFs[m].T
-            varexp[m] = pd.Series(s**2/(s**2).sum(), name=m)
+            varexp[m] = pd.Series(S**2/(S**2).sum(), name=m)
 
         # Convert to DataFrames
         self.EOFs = pd.concat(EOFs, names=['month','qid'], axis=1).rename_axis('pc')
@@ -188,30 +188,30 @@ class Weather():
         # Combine EOFs and PCs and add back mean of transformed anomalies
         months = PCs.index.unique(level='month')
         if outpath is None:
-            self.zgen = pd.concat({m: PCs.xs(m, level='month').dropna(axis=1) @ self.EOFs.xs(m, level='month', axis=1).dropna()
+            self.Zgen = pd.concat({m: PCs.xs(m, level='month').dropna(axis=1) @ self.EOFs.xs(m, level='month', axis=1).dropna()
                                    for m in tqdm(months, disable=self.tqdm)}, names=['month'], axis=1
                                    ).reorder_levels(['qid','month'], axis=1).reindex(self.cols, axis=1)
-            return self.zgen
+            return self.Zgen
         elif regvar is not None:
             # Stochastic or forecast-stochastic run
             if 'batch' in PCs.index.names:
                 for batch in PCs.index.unique(level='batch'):
                     PCs_batch = PCs.loc[batch]
-                    zgen = pd.concat({m: PCs_batch.xs(m, level='month') @ self.EOFs.xs(m, level='month', axis=1)
+                    Zgen = pd.concat({m: PCs_batch.xs(m, level='month') @ self.EOFs.xs(m, level='month', axis=1)
                                       for m in tqdm(months, disable=self.tqdm)}, names=['month'], axis=1
                                       ).reorder_levels(['qid','month'], axis=1
                                                        ).reindex(self.cols, axis=1).stack('month')
-                    zgen.to_parquet(os.path.join(outpath, f'{regvar}_zgen_batch{batch:03}.parquet'))
+                    Zgen.to_parquet(os.path.join(outpath, f'{regvar}_Zgen_batch{batch:03}.parquet'))
         else:
             print('Both or neither outpath and regvar should be None.')
 
-    def anoms_to_data(self, z, clim_year=None):
+    def anoms_to_data(self, Z, clim_year=None):
         """Convert standard anomalies back to reference data using inverse
          standardisation transformations.
 
         Parameters
         ----------
-            z : DataFrame
+            Z : DataFrame
                 Standard anomalies of a single region-weather variable
                 at monthly resolution.
             clim_year : int, optional
@@ -226,10 +226,10 @@ class Weather():
                 Generated weather from individual region-variables.
         """
         # Invert the transform
-        anoms = pd.DataFrame(self.ecdf.inverse(np.clip(ss.ndtr(z.add(self.anoms_tr_mean)),
+        anoms = pd.DataFrame(self.ecdf.inverse(np.clip(ss.ndtr(Z.add(self.Zmean)),
                                                a_min=self.ecdf.cdfs.min(axis=0),
                                                a_max=self.ecdf.cdfs.max(axis=0))),
-                                               index=z.index, columns=z.columns)
+                                               index=Z.index, columns=Z.columns)
         if clim_year is None:
             return anoms + self.clims
         else:
@@ -254,7 +254,7 @@ class Weather():
                                     index=False)
         self.clims.to_parquet(os.path.join(outpath, desc, 'clims.parquet'))
         self.ecdf.to_file(os.path.join(outpath, desc), 'ecdf')
-        self.anoms_tr_mean.unstack('month').to_parquet(os.path.join(outpath, desc, 'anoms-tr-mean.parquet'))
+        self.Zmean.unstack('month').to_parquet(os.path.join(outpath, desc, 'Zmean.parquet'))
         self.EOFs.to_parquet(os.path.join(outpath, desc, 'EOFs.parquet'))
         self.PCs.to_parquet(os.path.join(outpath, desc, 'PCs.parquet'))
 
@@ -274,7 +274,7 @@ class Weather():
         self.clims = pd.read_parquet(os.path.join(inpath, desc, 'clims.parquet'))
         self.ecdf = kt.kdecdf()
         self.ecdf.from_file(os.path.join(inpath, desc), 'ecdf')
-        self.anoms_tr_mean = pd.read_parquet(os.path.join(inpath, desc, 'anoms-tr-mean.parquet')).stack('month')
+        self.Zmean = pd.read_parquet(os.path.join(inpath, desc, 'Zmean.parquet')).stack('month')
         self.EOFs = pd.read_parquet(os.path.join(inpath, desc, 'EOFs.parquet'))
         self.PCs = pd.read_parquet(os.path.join(inpath, desc, 'PCs.parquet'))
 
@@ -394,10 +394,10 @@ class Model():
 
         for m in range(1, 13):
             X = self.weatherPCs.xs(m, level='month').dropna()
-            _, s, v = np.linalg.svd(X, full_matrices=False)
-            multiEOFs[m] = pd.DataFrame(v, columns=X.columns)
+            _, S, V = np.linalg.svd(X, full_matrices=False)
+            multiEOFs[m] = pd.DataFrame(V, columns=X.columns)
             multiPCs[m] = X @ multiEOFs[m].T
-            varexp[m] = pd.Series(s**2/(s**2).sum(), name=m)
+            varexp[m] = pd.Series(S**2/(S**2).sum(), name=m)
 
         # Convert to DataFrames
         self.multiEOFs = pd.concat(multiEOFs, names=['month','pc_multi'])
@@ -776,7 +776,7 @@ class Model():
                                     index=False)
         self.clims.to_parquet(os.path.join(outpath, desc, 'clims.parquet'))
         self.ecdf.to_file(os.path.join(outpath, desc), 'ecdf')
-        self.anoms_tr_mean.unstack('month').to_parquet(os.path.join(outpath, desc, 'anoms-tr-mean.parquet'))
+        self.Zmean.unstack('month').to_parquet(os.path.join(outpath, desc, 'Zmean.parquet'))
         self.EOFs.to_parquet(os.path.join(outpath, desc, 'EOFs.parquet'))
         self.PCs.to_parquet(os.path.join(outpath, desc, 'PCs.parquet'))
 
@@ -796,6 +796,6 @@ class Model():
         self.clims = pd.read_parquet(os.path.join(inpath, desc, 'clims.parquet'))
         self.ecdf = kt.kdecdf()
         self.ecdf.from_file(os.path.join(inpath, desc), 'ecdf')
-        self.anoms_tr_mean = pd.read_parquet(os.path.join(inpath, desc, 'anoms-tr-mean.parquet')).stack('month')
+        self.Zmean = pd.read_parquet(os.path.join(inpath, desc, 'Zmean.parquet')).stack('month')
         self.EOFs = pd.read_parquet(os.path.join(inpath, desc, 'EOFs.parquet'))
         self.PCs = pd.read_parquet(os.path.join(inpath, desc, 'PCs.parquet'))
