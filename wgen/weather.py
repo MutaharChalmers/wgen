@@ -77,14 +77,16 @@ class Weather():
         self.anoms = self.data.reindex(self.clims.index) - self.clims[self.cols]
 
         # Fit 1D KDEs to each cell-month detrended anomalies and transform
-        self.ecdf = kt.kdecdf(N=N_KDE, buffer_bws=buffer_bws)
-        self.ecdf.fit(self.anoms)
-        Z = pd.DataFrame(st.norm.ppf(self.ecdf.transform(self.anoms)),
-                         index=self.anoms.index, columns=self.anoms.columns)
+        #self.ecdf = kt.kdecdf(N=N_KDE, buffer_bws=buffer_bws)
+        #self.ecdf.fit(self.anoms)
+        #Z = pd.DataFrame(st.norm.ppf(self.ecdf.transform(self.anoms)),
+        #                 index=self.anoms.index, columns=self.anoms.columns)
 
         # Zero-mean data by month prior to PCA
-        self.Zmean = Z.mean()
-        self.Zin = Z - self.Zmean
+        #self.Zmean = Z.mean()
+        #self.Zin = Z - self.Zmean
+        self.Zmean = self.anoms.mean()
+        self.Zin = self.anoms - self.Zmean
 
     def clims_to_seasons(self, clim_year, buffer=(1, 1), max_nseas=2):
         """Identify seasons using changes in monthly climatology.
@@ -226,10 +228,11 @@ class Weather():
                 Generated weather from individual region-variables.
         """
         # Invert the transform
-        anoms = pd.DataFrame(self.ecdf.inverse(np.clip(ss.ndtr(Z.add(self.Zmean)),
-                                               a_min=self.ecdf.cdfs.min(axis=0),
-                                               a_max=self.ecdf.cdfs.max(axis=0))),
-                                               index=Z.index, columns=Z.columns)
+        #anoms = pd.DataFrame(self.ecdf.inverse(np.clip(ss.ndtr(Z.add(self.Zmean)),
+        #                                       a_min=self.ecdf.cdfs.min(axis=0),
+        #                                       a_max=self.ecdf.cdfs.max(axis=0))),
+        #                                       index=Z.index, columns=Z.columns)
+        anoms = Z.add(self.Zmean)
         if clim_year is None:
             return anoms + self.clims
         else:
