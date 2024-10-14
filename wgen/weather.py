@@ -256,7 +256,7 @@ class Weather():
         self.cols.to_frame().to_csv(os.path.join(outpath, desc, 'columns.csv'),
                                     index=False)
         self.clims.to_parquet(os.path.join(outpath, desc, 'clims.parquet'))
-        self.ecdf.to_file(os.path.join(outpath, desc), 'ecdf')
+        #self.ecdf.to_file(os.path.join(outpath, desc), 'ecdf')
         self.Zmean.unstack('month').to_parquet(os.path.join(outpath, desc, 'Zmean.parquet'))
         self.EOFs.to_parquet(os.path.join(outpath, desc, 'EOFs.parquet'))
         self.PCs.to_parquet(os.path.join(outpath, desc, 'PCs.parquet'))
@@ -276,7 +276,7 @@ class Weather():
         self.cols = pd.MultiIndex.from_frame(cols_df)
         self.clims = pd.read_parquet(os.path.join(inpath, desc, 'clims.parquet'))
         self.ecdf = kt.kdecdf()
-        self.ecdf.from_file(os.path.join(inpath, desc), 'ecdf')
+        #self.ecdf.from_file(os.path.join(inpath, desc), 'ecdf')
         self.Zmean = pd.read_parquet(os.path.join(inpath, desc, 'Zmean.parquet')).stack('month')
         self.EOFs = pd.read_parquet(os.path.join(inpath, desc, 'EOFs.parquet'))
         self.PCs = pd.read_parquet(os.path.join(inpath, desc, 'PCs.parquet'))
