@@ -161,13 +161,6 @@ class Weather():
             PCs[m] = X @ EOFs[m].T
             varexp[m] = pd.Series(s**2/(s**2).sum(), name=m)
 
-            # Align EOFs of successive months for ease of interpretation
-            if m > 1:
-                cols = EOFs[m].columns.intersection(EOFs[m-1].columns)
-                sgn = np.sign(np.diag(EOFs[m][cols] @ EOFs[m-1][cols].T))
-                EOFs[m] = EOFs[m] * sgn[:,None]
-                PCs[m] = PCs[m] * sgn[None,:]
-
         # Convert to DataFrames
         self.EOFs = pd.concat(EOFs, names=['month','qid'], axis=1).rename_axis('pc')
         self.PCs = pd.concat(PCs, names=['month']).rename_axis('pc', axis=1)
@@ -405,13 +398,6 @@ class Model():
             multiEOFs[m] = pd.DataFrame(v, columns=X.columns)
             multiPCs[m] = X @ multiEOFs[m].T
             varexp[m] = pd.Series(s**2/(s**2).sum(), name=m)
-
-            # Align EOFs of successive months for ease of interpretation
-            if m > 1:
-                cols = multiEOFs[m].columns.intersection(multiEOFs[m-1].columns)
-                sgn = np.sign(np.diag(multiEOFs[m][cols] @ multiEOFs[m-1][cols].T))
-                multiEOFs[m] = multiEOFs[m] * sgn[:,None]
-                multiPCs[m] = multiPCs[m] * sgn[None,:]
 
         # Convert to DataFrames
         self.multiEOFs = pd.concat(multiEOFs, names=['month','pc_multi'])
