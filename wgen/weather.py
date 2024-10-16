@@ -14,79 +14,99 @@ import quadgrid as qg
 import climperiods
 import kdetools as kt
 import scskde as sk
-
 from .telesst import TeleSST
 
 
 class Weather():
-    def __init__(self, tqdm=True):
+    def __init__(self, standardise=True, N_KDE=100, buffer_bws=5, seed=42, tqdm=False):
         """Process weather data for a single region-variable.
 
-        Weather data must have been pre-processed into a standard structure,
-        with columns being unique cellIDs and a row index of (year, month).
-        """
-
-        self.tqdm = tqdm
-        self.now = datetime.datetime.now()
-
-    def calc_anoms(self, weather_data, year_range, N_KDE=100, buffer_bws=3):
-        """Calculate anomalies from weather data for a single region-variable.
-
-        Data is first detrended by removing a rolling N-year climatology
-        (N = 30 years centred is the NOAA standard) then it is converted to
-        standardised anomalies by fitting a KDE to each cell-month. Assumes
-        that weather data is saved in parquet format with columns being unique
-        cellIDs and a row index of (year, month).
+        Weather data must have been pre-processed into a standard DataFrame
+        structure with unique cellIDs as columns a row index of (year, month).
 
         Parameters
         ----------
-        weather_data : DataFrame
-            DataFrame with (year, month) MultiIndex, and qid (quadtreeID) columns.
-        year_range : (int, int)
-            Year range to process.
+        standardise : bool, optional
+            Standardise input data prior to PCA or not. Defaults to True.
         N_KDE : int, optional
             Number of points used to discretise the KDE.
         buffer_bws : int, optional
             Number of bandwidths beyond data limits to extend evaluation
             range over, to handle extrapolation.
+        seed : int, optional
+            Seed or random number generator state variable. Used only to
+            generate very low amplitude Gaussian noise to add to cell-months
+            with zero variance, in order to make standardisation work.
+        tqdm : bool, optional
+            Show tqdm progress bars. Defaults to False.
         """
 
-        # Load the raw weather data and pivot to cell-months
-        data = weather_data.unstack('month')
-        self.cols_all = data.columns
+        self.standardise = standardise
+        if standardise:
+            self.ecdf = kt.kdecdf(N=N_KDE, buffer_bws=buffer_bws)
+            self.rng = np.random.RandomState(seed)
+            self.grids = {}
+            self.cdfs = {}
 
-        #  Filter out zero variance cell-months
-        variance = np.nanvar(data, axis=0)
-        self.cols = data.columns[variance>0]
-        self.data = data[self.cols]
+        self.tqdm = not tqdm
+        self.now = datetime.datetime.now()
+
+    def calc_anoms(self, data, year_range):
+        """Calculate anomalies from weather data for a single region-variable.
+
+        Data is first detrended by removing a rolling N-year climatology;
+        N=30 years centred moving every 5 years is the NOAA standard. If
+        specified, it is converted to standardised anomalies by fitting a KDE
+        to each cell-month. Assumes that weather data is passed as a DataFrame
+        with columns being unique cellIDs and a row index of (year, month).
+
+        Parameters
+        ----------
+        data : DataFrame
+            DataFrame with (year, month) MultiIndex, and qid (quadtreeID) columns.
+        year_range : (int, int)
+            Year range to process.
+        """
 
         if year_range[1] > self.now.year:
             print(f'year range {year_range} cannot include the future')
             return None
 
         # Define the climate periods used to calculate the anomalies
-        clims_map = climperiods.clims(*year_range)
-        clims_unique = clims_map.drop_duplicates()
+        clims_map = climperiods.clims(*year_range).reset_index()
+        clims_unique = clims_map[['year_from','year_to']].drop_duplicates()
 
-        # Calculate climatologies from full input DataFrame, anomalies from valid
-        clims = {window: data.loc[slice(*window),:].mean()
-                 for window in clims_unique.itertuples(index=False, name=None)}
-        self.clims = pd.concat({yft[0]: clims[yft[1:]]
-                                for yft in clims_map.itertuples(name=None)},
-                                names=['year'], axis=1).T
-        self.anoms = self.data.reindex(self.clims.index) - self.clims[self.cols]
+        # Calculate climatologies from full input DataFrame
+        clims = {tuple(w): data.loc[slice(*w)].groupby(level='month').mean()
+                 for w in clims_unique.values}
+        self.clims = pd.concat({yft[0]: clims[tuple(yft[1:])]
+                                for yft in clims_map.values}, names=['year'])
 
-        # Fit 1D KDEs to each cell-month detrended anomalies and transform
-        #self.ecdf = kt.kdecdf(N=N_KDE, buffer_bws=buffer_bws)
-        #self.ecdf.fit(self.anoms)
-        #Z = pd.DataFrame(st.norm.ppf(self.ecdf.transform(self.anoms)),
-        #                 index=self.anoms.index, columns=self.anoms.columns)
+        # Calculate 'anomalies' - deviations from local climatology
+        self.anoms = (data - self.clims).dropna()
 
-        # Zero-mean data by month prior to PCA
-        #self.Zmean = Z.mean()
-        #self.Zin = Z - self.Zmean
-        self.Zmean = self.anoms.mean()
-        self.Zin = self.anoms - self.Zmean
+        # Fit 1D KDEs to each cell-month's anomalies and standardise
+        if self.standardise:
+            # If any cell-months have insufficient variance, add Gaussian noise
+            stdevs = self.anoms.groupby(level='month').std()
+            noise = self.rng.normal(scale=1e-9, size=self.anoms.shape)
+            self.anoms = self.anoms.where(stdevs>=1e-9, noise)
+
+            # Fit and transform anomalies to standard normal distributions
+            Z = []
+            for m, anoms_m in self.anoms.groupby(level='month'):
+                self.ecdf.fit(anoms_m)
+                Z.append(pd.DataFrame(st.norm.ppf(self.ecdf.transform(anoms_m)),
+                                      index=anoms_m.index, columns=anoms_m.columns))
+                self.grids[m] = self.ecdf.grids
+                self.cdfs[m] = self.ecdf.cdfs
+            Z = pd.concat(Z).sort_index()
+        else:
+            Z = self.anoms
+
+        # Zero-mean data by month to prepare for PCA
+        self.Zmean = Z.groupby(level='month').mean()
+        self.Zin = Z - self.Zmean
 
     def clims_to_seasons(self, clim_year, buffer=(1, 1), max_nseas=2):
         """Identify seasons using changes in monthly climatology.
@@ -108,7 +128,7 @@ class Weather():
         """
 
         # Make DataFrame of buffered monthly climatologies
-        clims = self.clims.loc[clim_year].unstack('month').T.sort_index()
+        clims = self.clims.loc[clim_year]
         clims_wrap = np.vstack([clims.loc[12], clims, clims.loc[1]])
 
         # Annual 25th and 75th climate percentiles - used heuristically for
@@ -140,36 +160,36 @@ class Weather():
                                         columns=clims.columns)
 
     def anoms_to_PCs(self, wts=None):
-        """Calculate EOFs and PCs of monthly standard anomalies.
+        """Calculate EOFs and PCs of monthly anomalies.
 
         Parameters
         ----------
             wts : Series, optional
-                Weights to apply to standard anomalies with index consistent
-                with the columns of the already-computed standard anomalies.
+                Weights to apply to anomalies with consistent index.
         """
 
         # Calculate weights
         if wts is None:
             self.wts = 1
 
+        # Keep one less EOFs/PCs than the number of unique years
+        n = self.Zin.index.unique(level='year').size - 1
+
         # Calculate EOFs and PCs for each month
-        EOFs, PCs, varexp = {}, {}, {}
+        EOFs, PCs = {}, {}
 
         for m in tqdm(range(1, 13), disable=self.tqdm):
-            X = self.Zin.xs(m, level='month', axis=1).dropna() * self.wts
-            _, S, V = np.linalg.svd(X, full_matrices=False)
-            EOFs[m] = pd.DataFrame(V, columns=X.columns)
+            X = self.Zin.xs(m, level='month') * self.wts
+            _, _, V = np.linalg.svd(X, full_matrices=False)
+            EOFs[m] = pd.DataFrame(V[:n,:], columns=X.columns)
             PCs[m] = X @ EOFs[m].T
-            varexp[m] = pd.Series(S**2/(S**2).sum(), name=m)
 
         # Convert to DataFrames
-        self.EOFs = pd.concat(EOFs, names=['month','qid'], axis=1).rename_axis('pc')
+        self.EOFs = pd.concat(EOFs, names=['month','pc'])
         self.PCs = pd.concat(PCs, names=['month']).rename_axis('pc', axis=1)
-        self.varexp = pd.concat(varexp, axis=1, names=['month']).rename_axis('pc', axis=0)
 
     def PCs_to_anoms(self, PCs, outpath=None, regvar=None):
-        """Calculate monthly standard anomalies from PCs using existing EOFs.
+        """Calculate monthly anomalies from PCs using existing EOFs.
 
         Parameters
         ----------
@@ -182,61 +202,92 @@ class Weather():
 
         Returns
         -------
-            zgen : DataFrame
-                Generated standard anomalies from individual region-variables.
+            Zgen : DataFrame
+                Generated anomalies from individual region-variables.
                 Only returned if outpath is None.
         """
 
-        # Combine EOFs and PCs and add back mean of transformed anomalies
-        months = PCs.index.unique(level='month')
-        if outpath is None:
-            self.Zgen = pd.concat({m: PCs.xs(m, level='month').dropna(axis=1) @ self.EOFs.xs(m, level='month', axis=1).dropna()
-                                   for m in tqdm(months, disable=self.tqdm)}, names=['month'], axis=1
-                                   ).reorder_levels(['qid','month'], axis=1).reindex(self.cols, axis=1)
-            return self.Zgen
-        elif regvar is not None:
-            # Stochastic or forecast-stochastic run
-            if 'batch' in PCs.index.names:
-                for batch in PCs.index.unique(level='batch'):
-                    PCs_batch = PCs.loc[batch]
-                    Zgen = pd.concat({m: PCs_batch.xs(m, level='month') @ self.EOFs.xs(m, level='month', axis=1)
-                                      for m in tqdm(months, disable=self.tqdm)}, names=['month'], axis=1
-                                      ).reorder_levels(['qid','month'], axis=1
-                                                       ).reindex(self.cols, axis=1).stack('month')
-                    Zgen.to_parquet(os.path.join(outpath, f'{regvar}_Zgen_batch{batch:03}.parquet'))
+        writeable = outpath is not None and regvar is not None
+
+        # Combine EOFs and PCs to get anomalies
+        Zgen = {}
+
+        # If processing stochastic data, don't concat Zgen dict for efficiency
+        if 'batch' in PCs.index.names:
+            for b in tqdm(PCs.index.unique(level='batch'), disable=self.tqdm):
+                PCs_batch = PCs.loc[b]
+                Zgen[b] = pd.concat([PC.dropna(axis=1) @ self.EOFs.loc[m]
+                                     for m, PC in PCs_batch.groupby(level='month')]
+                                     ).reorder_levels(PCs_batch.index.names).sort_index()
+                if writeable:
+                    fname = f'{regvar}_Zgen_batch{b:03}.parquet'
+                    Zgen[b].to_parquet(os.path.join(outpath, fname))
+            self.Zgen = Zgen
         else:
-            print('Both or neither outpath and regvar should be None.')
+            Zgen = pd.concat([PC.dropna(axis=1) @ self.EOFs.loc[m]
+                              for m, PC in PCs.groupby(level='month')]
+                              ).reorder_levels(PCs.index.names).sort_index()
+            if writeable:
+                fname = f'{regvar}_Zgen_.parquet'
+                Zgen.to_parquet(os.path.join(outpath, fname))
+            self.Zgen = Zgen
+        return self.Zgen
 
     def anoms_to_data(self, Z, clim_year=None):
-        """Convert standard anomalies back to reference data using inverse
-         standardisation transformations.
+        """Convert anomalies back to reference data.
 
         Parameters
         ----------
-            Z : DataFrame
-                Standard anomalies of a single region-weather variable
-                at monthly resolution.
+            Z : DataFrame or dict
+                Anomalies of a single region-weather variable.
             clim_year : int, optional
-                Year from self.clims to use as reference climatology.
-                Corresponds to a pre-defined reference period. If None,
-                use different climatologies for each year, but this is
-                only applicable for reconstructing historic data as-was.
+                Use this clim_year's reference climatology from self.clims.
+                If None, use different climatologies for each year, but only
+                for reconstructing historic data as-was.
 
         Returns
         -------
             gen : DataFrame
                 Generated weather from individual region-variables.
         """
-        # Invert the transform
-        #anoms = pd.DataFrame(self.ecdf.inverse(np.clip(ss.ndtr(Z.add(self.Zmean)),
-        #                                       a_min=self.ecdf.cdfs.min(axis=0),
-        #                                       a_max=self.ecdf.cdfs.max(axis=0))),
-        #                                       index=Z.index, columns=Z.columns)
-        anoms = Z.add(self.Zmean)
+
         if clim_year is None:
-            return anoms + self.clims
+            clims = self.clims
         else:
-            return anoms + self.clims.loc[clim_year]
+            clims = self.clims.loc[clim_year]
+
+        if self.standardise:
+            ecdf = kt.kdecdf()
+
+            # If Z is a dict, it's a stochastic batch run
+            if isinstance(Z, dict):
+                data = {}
+                for b, Zb in Z.items():
+                    data_m = []
+                    for m, Zm in Zb.groupby(level='month'):
+                        ecdf.grids = self.grids[m]
+                        ecdf.cdfs = self.cdfs[m]
+                        anoms_m = ecdf.inverse(ss.ndtr(Zm+self.Zmean.loc[m]))
+                        data_m.append(pd.DataFrame(anoms_m, index=Zm.index,
+                                                   columns=Zm.columns))
+                    data[b] = (pd.concat(data_m).sort_index() + clims).dropna()
+            else:
+                data_m = []
+                for m, Zm in Z.groupby(level='month'):
+                    ecdf.grids = self.grids[m]
+                    ecdf.cdfs = self.cdfs[m]
+                    anoms_m = ecdf.inverse(ss.ndtr(Zm+self.Zmean.loc[m]))
+                    data_m.append(pd.DataFrame(anoms_m, index=Zm.index,
+                                               columns=Zm.columns))
+                data = (pd.concat(data_m).sort_index() + clims).dropna()
+            return data
+        else:
+            # If Z is a dict, it's a stochastic batch run
+            if isinstance(Z, dict):
+                return {b: (Zb + self.Zmean + clims).dropna()
+                        for b, Zb in Z.items()}
+            else:
+                return (Z + self.Zmean + clims).dropna()
 
     def to_file(self, outpath, desc):
         """Save model to disk.
@@ -253,13 +304,19 @@ class Weather():
 
         if not os.path.exists(os.path.join(outpath, desc)):
             os.makedirs(os.path.join(outpath, desc))
-        self.cols.to_frame().to_csv(os.path.join(outpath, desc, 'columns.csv'),
-                                    index=False)
+
         self.clims.to_parquet(os.path.join(outpath, desc, 'clims.parquet'))
-        #self.ecdf.to_file(os.path.join(outpath, desc), 'ecdf')
-        self.Zmean.unstack('month').to_parquet(os.path.join(outpath, desc, 'Zmean.parquet'))
+        self.Zmean.to_parquet(os.path.join(outpath, desc, 'Zmean.parquet'))
         self.EOFs.to_parquet(os.path.join(outpath, desc, 'EOFs.parquet'))
         self.PCs.to_parquet(os.path.join(outpath, desc, 'PCs.parquet'))
+
+        if self.standardise:
+            # Manually create format required by kdetools
+            for m in range(1, 13, 1):
+                grids = pd.DataFrame(self.grids[m], columns=self.clims.columns)
+                cdfs = pd.DataFrame(self.cdfs[m], columns=self.clims.columns)
+                ecdf_m = pd.concat({'grids': grids, 'cdfs': cdfs})
+                ecdf_m.to_parquet(os.path.join(outpath, f'ecdf_{desc}_{m:02}.parquet'))
 
     def from_file(self, inpath, desc):
         """Load model from disk.
@@ -272,14 +329,17 @@ class Weather():
                 Description of model.
         """
 
-        cols_df = pd.read_csv(os.path.join(inpath, desc, 'columns.csv'))
-        self.cols = pd.MultiIndex.from_frame(cols_df)
         self.clims = pd.read_parquet(os.path.join(inpath, desc, 'clims.parquet'))
-        #self.ecdf = kt.kdecdf()
-        #self.ecdf.from_file(os.path.join(inpath, desc), 'ecdf')
-        self.Zmean = pd.read_parquet(os.path.join(inpath, desc, 'Zmean.parquet')).stack('month')
+        self.Zmean = pd.read_parquet(os.path.join(inpath, desc, 'Zmean.parquet'))
         self.EOFs = pd.read_parquet(os.path.join(inpath, desc, 'EOFs.parquet'))
         self.PCs = pd.read_parquet(os.path.join(inpath, desc, 'PCs.parquet'))
+
+        if self.standardise:
+            # Manually create format required by kdetools
+            for m in range(1, 13, 1):
+                ecdf_m = pd.read_parquet(os.path.join(inpath, f'ecdf_{desc}_{m:02}.parquet'))
+                self.grids[m] = ecdf_m.loc['grids'].to_numpy()
+                self.cdfs[m] = ecdf_m.loc['cdfs'].to_numpy()
 
     def to_oasis(self, haz_df, outpath, kind='stoc', bounds=(0, 0, 0.5, 1),
                  nbins=51, qid_res=5/60):
@@ -344,7 +404,8 @@ class Weather():
                 'occurrence_lt': occurrence_lt}
 
 class Model():
-    def __init__(self, weatherpc_inpath, telehist_inpath, telefore_inpath=None):
+    def __init__(self, weatherpc_inpath, telehist_inpath, telefore_inpath=None,
+                 seed=42):
         """Fit and apply weather generation model.
 
         Parameters
@@ -355,11 +416,14 @@ class Model():
             Path to processed historic teleconnection data.
         telefore_inpath : str, optional
             Path to processed historic teleconnection data.
+        seed : int, optional
+            Seed or random number generator state variable.
         """
 
         self.weatherpc_inpath = weatherpc_inpath
         self.telehist_inpath = telehist_inpath
         self.telefore_inpath = telefore_inpath
+        self.rng = np.random.RandomState(seed)
 
     def load_weather_data(self, names):
         """Load historic pre-processed weather data from disk.
@@ -392,15 +456,17 @@ class Model():
         """Calculate EOFs and PCs of multiple region-variables.
         """
 
+        # Keep one less EOFs/PCs than the number of unique years
+        n = self.weatherPCs.index.unique(level='year').size - 1
+
         # Calculate EOFs and PCs for each month
-        multiEOFs, multiPCs, varexp = {}, {}, {}
+        multiEOFs, multiPCs = {}, {}
 
         for m in range(1, 13):
-            X = self.weatherPCs.xs(m, level='month').dropna()
-            _, S, V = np.linalg.svd(X, full_matrices=False)
-            multiEOFs[m] = pd.DataFrame(V, columns=X.columns)
+            X = self.weatherPCs.xs(m, level='month').dropna(axis=1)
+            _, _, V = np.linalg.svd(X, full_matrices=False)
+            multiEOFs[m] = pd.DataFrame(V[:n,:], columns=X.columns)
             multiPCs[m] = X @ multiEOFs[m].T
-            varexp[m] = pd.Series(S**2/(S**2).sum(), name=m)
 
         # Convert to DataFrames
         self.multiEOFs = pd.concat(multiEOFs, names=['month','pc_multi'])
@@ -408,7 +474,6 @@ class Model():
                                   ).reorder_levels(['year','month']
                                                    ).sort_index(
                                                    ).rename_axis('pc_multi', axis=1)
-        self.varexp = pd.concat(varexp, axis=1, names=['month']).rename_axis('pc_multi', axis=0)
         self.N_multiPCs = self.multiPCs.shape[1]
 
     def multiPCs_to_PCs(self, multiPCs, bias_correct=True, whiten=True):
@@ -437,7 +502,8 @@ class Model():
 
         # Bias correct standard deviation
         if bias_correct:
-            bias_fac = self.weatherPCs.groupby(level='month').std()/weatherPCs.groupby(level='month').std()
+            bias_fac = (self.weatherPCs.groupby(level='month').std()/
+                        weatherPCs.groupby(level='month').std())
             weatherPCs = weatherPCs * bias_fac
 
         if whiten:
@@ -462,7 +528,7 @@ class Model():
                 Maximum number of features to select. Defaults to 3.
             topM : int, optional
                 Number of multiPCs to use as predictors from the previous time
-                step. Defaults to the first M explaining 99% of the variance.
+                step. Defaults to the first M explaining 90% of the variance.
 
         Returns
         -------
@@ -471,7 +537,9 @@ class Model():
         """
 
         if topM is None:
-            topM = self.varexp.cumsum().min(axis=1).searchsorted(0.99)
+            varexp = self.multiPCs.groupby(level='month').var().T
+            varexp = (varexp/varexp.sum())
+            topM = varexp.cumsum().min(axis=1).searchsorted(0.9)
 
         corr, pval = {}, {}
         wcols, M = self.multiPCs.columns, self.multiPCs.shape[1]
@@ -509,7 +577,7 @@ class Model():
                 Maximum number of features to select. Defaults to 3.
             topM : int, optional
                 Number of multiPCs to use as predictors from the previous time
-                step. Defaults to the first M explaining 99% of the variance.
+                step. Defaults to the first M explaining 90% of the variance.
 
         Returns
         -------
@@ -518,7 +586,9 @@ class Model():
         """
 
         if topM is None:
-            topM = self.tele.varexp.cumsum().min(axis=1).searchsorted(0.99)
+            varexp = self.multiPCs.groupby(level='month').var().T
+            varexp = (varexp/varexp.sum())
+            topM = varexp.cumsum().min(axis=1).searchsorted(0.9)
 
         corr0, corr1, pval0, pval1 = {}, {}, {}, {}
         wcols, M = self.multiPCs.columns, self.multiPCs.shape[1]
@@ -565,6 +635,7 @@ class Model():
             max_feats_x : int, optional
                 Maximum number of exogenous features to select. Defaults to 3.
         """
+
         depn = self.make_depn(p_thresh_n, max_feats_n)
         depx = self.make_depx(p_thresh_x, max_feats_x)
         ix = self.multiPCs.index.intersection(self.tele.PCs.index)
@@ -631,7 +702,7 @@ class Model():
         PCs_dc = PCs_dc.reorder_levels(levels[1:]+[levels[0]]).sort_index()
         return PCs_dc
 
-    def make_multiPCs0(self, month0, N_batches, seed=42):
+    def make_multiPCs0(self, month0, N_batches):
         """Generate initial values for multiPCs for a reference month by
         sampling from the historic distribution.
 
@@ -642,8 +713,6 @@ class Model():
                 model, only one month is needed.
             N_batches : int
                 Number of batches to simulate.
-            seed : int, optional
-                Seed or random number generator state variable.
 
         Returns
         -------
@@ -651,10 +720,9 @@ class Model():
                 Initial multiPCs for stochastic simulation.
         """
 
-        rng = np.random.RandomState(seed)
         sigs = self.multiPCs.xs(month0, level='month').std()
         mus = np.zeros(sigs.size)
-        return pd.DataFrame(rng.normal(mus, sigs, size=(N_batches, sigs.size)),
+        return pd.DataFrame(self.rng.normal(mus, sigs, size=(N_batches, sigs.size)),
                             columns=self.multiPCs.columns)
 
     def simulate(self, multiPCs0, telePCs, seed=42, bias_correct=True, whiten=True):
@@ -701,10 +769,11 @@ class Model():
         stoc_df = pd.DataFrame(stoc_raw.reshape(-1, self.N_multiPCs),
                                index=telePCs.index).rename_axis('pc_multi', axis=1)
 
-        # Zero-mean simulated PCs and bias correct standard deviation
+        # Zero-mean simulated multiPCs and bias correct standard deviation
         stoc_zm = stoc_df - stoc_df.groupby(level='month').mean()
         if bias_correct:
-            bias_fac = self.multiPCs.groupby(level='month').std()/stoc_zm.groupby(level='month').std()
+            bias_fac = (self.multiPCs.groupby(level='month').std()/
+                        stoc_zm.groupby(level='month').std())
             stoc = stoc_zm * bias_fac
         else:
             stoc = stoc_zm
@@ -773,15 +842,8 @@ class Model():
                 Description of model.
         """
 
-        if not os.path.exists(os.path.join(outpath, desc)):
-            os.makedirs(os.path.join(outpath, desc))
-        self.cols.to_frame().to_csv(os.path.join(outpath, desc, 'columns.csv'),
-                                    index=False)
-        self.clims.to_parquet(os.path.join(outpath, desc, 'clims.parquet'))
-        self.ecdf.to_file(os.path.join(outpath, desc), 'ecdf')
-        self.Zmean.unstack('month').to_parquet(os.path.join(outpath, desc, 'Zmean.parquet'))
-        self.EOFs.to_parquet(os.path.join(outpath, desc, 'EOFs.parquet'))
-        self.PCs.to_parquet(os.path.join(outpath, desc, 'PCs.parquet'))
+        # TODO Create model.from_file()
+        return None
 
     def from_file(self, inpath, desc):
         """Load model from disk.
@@ -794,11 +856,5 @@ class Model():
                 Description of model.
         """
 
-        cols_df = pd.read_csv(os.path.join(inpath, desc, 'columns.csv'))
-        self.cols = pd.MultiIndex.from_frame(cols_df)
-        self.clims = pd.read_parquet(os.path.join(inpath, desc, 'clims.parquet'))
-        self.ecdf = kt.kdecdf()
-        self.ecdf.from_file(os.path.join(inpath, desc), 'ecdf')
-        self.Zmean = pd.read_parquet(os.path.join(inpath, desc, 'Zmean.parquet')).stack('month')
-        self.EOFs = pd.read_parquet(os.path.join(inpath, desc, 'EOFs.parquet'))
-        self.PCs = pd.read_parquet(os.path.join(inpath, desc, 'PCs.parquet'))
+        # TODO Create model.from_file()
+        return None

@@ -119,15 +119,14 @@ class TeleSST():
         self.wts_ss = self.wts_da.to_series()
 
         # Calculate EOFs and PCs for each month
-        EOFs, PCs, varexp = {}, {}, {}
+        EOFs, PCs = {}, {}
 
         for m in range(1, 13):
             da_month = da.sel(month=m) * self.wts_da
             X = da_month.to_series().dropna().unstack(['latitude','longitude'])
-            _, S, V = np.linalg.svd(X, full_matrices=False)
+            _, _, V = np.linalg.svd(X, full_matrices=False)
             EOFs[m] = pd.DataFrame(V, columns=X.columns)
             PCs[m] = X @ EOFs[m].T
-            varexp[m] = pd.Series(S**2/(S**2).sum(), name=m)
 
             # Align EOFs of successive months for ease of interpretation
             if m > 1:
@@ -141,7 +140,6 @@ class TeleSST():
         self.PCs = pd.concat(PCs, names=['month']
                              ).reorder_levels(['year','month']
                                               ).sort_index().rename_axis('pc', axis=1)
-        self.varexp = pd.concat(varexp, axis=1, names=['month']).rename_axis('pc', axis=0)
 
     def to_file(self, outpath, desc):
         """Save EOFs and PCs to disk.
@@ -155,7 +153,6 @@ class TeleSST():
         """
         self.EOFs.to_parquet(os.path.join(outpath, f'EOFs_{desc}.parquet'))
         self.PCs.to_parquet(os.path.join(outpath, f'PCs_{desc}.parquet'))
-        self.varexp.to_parquet(os.path.join(outpath, f'varexp_{desc}.parquet'))
 
     def from_file(self, inpath, desc):
         """Load model from disk.
@@ -169,7 +166,6 @@ class TeleSST():
         """
         self.EOFs = pd.read_parquet(os.path.join(inpath, f'EOFs_{desc}.parquet'))
         self.PCs = pd.read_parquet(os.path.join(inpath, f'PCs_{desc}.parquet'))
-        self.varexp = pd.read_parquet(os.path.join(inpath, f'varexp_{desc}.parquet'))
 
         # Calculate weights
         lats = self.EOFs.columns.unique(level='latitude').to_series()
