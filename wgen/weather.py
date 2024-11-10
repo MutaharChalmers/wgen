@@ -100,10 +100,7 @@ class Weather():
             # Fit and transform anomalies to standard normal distributions
             Z = []
             for m, anoms_m in self.anoms.groupby(level='month'):
-                self.ecdf.fit(anoms_m)
-
-                # Clip bandwidths to minimum
-                self.ecdf.bws = np.clip(self.ecdf.bws, bw_min, None)
+                self.ecdf.fit(anoms_m, bw_min=bw_min)
 
                 Z.append(pd.DataFrame(st.norm.ppf(self.ecdf.transform(anoms_m)),
                                       index=anoms_m.index, columns=anoms_m.columns))
