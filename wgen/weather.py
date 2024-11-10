@@ -48,7 +48,7 @@ class Weather():
         self.tqdm = not tqdm
         self.now = datetime.datetime.now()
 
-    def calc_anoms(self, data, year_range, clims, noise_sig=1e-3):
+    def calc_anoms(self, data, year_range, clims, noise_sig=1e-6):
         """Calculate anomalies from weather data for a single region-variable.
 
         Data is first detrended by removing a rolling N-year climatology;
