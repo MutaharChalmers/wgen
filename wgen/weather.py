@@ -48,7 +48,7 @@ class Weather():
         self.tqdm = not tqdm
         self.now = datetime.datetime.now()
 
-    def calc_anoms(self, data, year_range, clims, noise_sig=1e-6):
+    def calc_anoms(self, data, year_range, clims, bw_min=1e-18):
         """Calculate anomalies from weather data for a single region-variable.
 
         Data is first detrended by removing a rolling N-year climatology;
@@ -66,9 +66,8 @@ class Weather():
         clims : DataFrame
             DataFrame indexed by year with year_from and year_to columns,
             for calculating the climatologies for each year.
-        noise_sig : float, optional
-            Standard deviation of Gaussian noise to be added to values
-            with too low variance. Defaults to 1e-3.
+        bw_min : float, optional
+            Minimum KDE bandwidth. Defaults to 1e-18.
         """
 
         if year_range[1] > self.now.year:
@@ -91,14 +90,17 @@ class Weather():
         # Fit 1D KDEs to each cell-month's anomalies and standardise
         if self.standardise:
             # If any cell-months have insufficient variance, add Gaussian noise
-            stdevs = self.anoms.groupby(level='month').std()
-            noise = self.rng.normal(scale=noise_sig, size=self.anoms.shape)
-            self.anoms = self.anoms.where(stdevs>=noise_sig, noise)
+            #stdevs = self.anoms.groupby(level='month').std()
+            #noise = self.rng.normal(scale=noise_sig, size=self.anoms.shape)
+            #self.anoms = self.anoms.where(stdevs>=noise_sig, noise)
 
             # Fit and transform anomalies to standard normal distributions
             Z = []
             for m, anoms_m in self.anoms.groupby(level='month'):
                 self.ecdf.fit(anoms_m)
+
+                # Clip bandwidths to minimum
+                self.ecdf.bws = np.clip(self.ecdf.bws, bw_min, None)
 
                 Z.append(pd.DataFrame(st.norm.ppf(self.ecdf.transform(anoms_m)),
                                       index=anoms_m.index, columns=anoms_m.columns))
