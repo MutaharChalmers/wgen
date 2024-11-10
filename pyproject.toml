@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "wgen"
-version = "0.0.3"
+version = "0.1.0"
 description = "Yet another statistical weather generator"
 authors = [
            { name = "Mutahar Chalmers", email = "mutahar.chalmers@gmail.com" },
@@ -20,10 +20,8 @@ classifiers = [
     "Topic :: Scientific/Engineering",
 ]
 requires-python = ">=3.8"
-dependencies = [ "numpy>=1.18", "scipy>=1.10", "xarray>=2023.01.0",
-                 "zarr>=2.18", "scikit-learn>=1.0", "climperiods>=0.0.2",
-                 "ersst5tools>=0.0.1", "era5tools>=0.0.4", "seas5tools>=0.0.9",
-                 "kdetools>=0.1.9", "scskde>=0.1.0"
+dependencies = [ "numpy>=1.20.3", "scipy>=1.10", "pandas>=2.0", "xarray>=2023.01.0",
+                 "pyarrow>=14.0", "zarr>=2.18", "tqdm>=4.66", "kdetools>=0.1.10", "scskde>=0.1.0",
 ]
 
 [project.urls]

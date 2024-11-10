@@ -10,11 +10,8 @@ import scipy.special as ss
 from tqdm.auto import tqdm
 
 # Custom libraries
-import quadgrid as qg
-import climperiods
 import kdetools as kt
 import scskde as sk
-from .telesst import TeleSST
 
 
 class Weather():
@@ -51,7 +48,7 @@ class Weather():
         self.tqdm = not tqdm
         self.now = datetime.datetime.now()
 
-    def calc_anoms(self, data, year_range):
+    def calc_anoms(self, data, year_range, clims):
         """Calculate anomalies from weather data for a single region-variable.
 
         Data is first detrended by removing a rolling N-year climatology;
@@ -63,9 +60,12 @@ class Weather():
         Parameters
         ----------
         data : DataFrame
-            DataFrame with (year, month) MultiIndex, and qid (quadtreeID) columns.
+            DataFrame with (year, month) MultiIndex, and cellIDs as columns.
         year_range : (int, int)
             Year range to process.
+        clims : DataFrame
+            DataFrame indexed by year with year_from and year_to columns,
+            for calculating the climatologies for each year.
         """
 
         if year_range[1] > self.now.year:
@@ -73,13 +73,13 @@ class Weather():
             return None
 
         # Define the climate periods used to calculate the anomalies
-        clims_map = climperiods.clims(*year_range).reset_index()
+        clims_map = clims.reset_index()
         clims_unique = clims_map[['year_from','year_to']].drop_duplicates()
 
         # Calculate climatologies from full input DataFrame
-        clims = {tuple(w): data.loc[slice(*w)].groupby(level='month').mean()
+        clim_dict = {tuple(w): data.loc[slice(*w)].groupby(level='month').mean()
                  for w in clims_unique.values}
-        self.clims = pd.concat({yft[0]: clims[tuple(yft[1:])]
+        self.clims = pd.concat({yft[0]: clim_dict[tuple(yft[1:])]
                                 for yft in clims_map.values}, names=['year'])
 
         # Calculate 'anomalies' - deviations from local climatology
@@ -316,7 +316,7 @@ class Weather():
                 grids = pd.DataFrame(self.grids[m], columns=self.clims.columns)
                 cdfs = pd.DataFrame(self.cdfs[m], columns=self.clims.columns)
                 ecdf_m = pd.concat({'grids': grids, 'cdfs': cdfs})
-                ecdf_m.to_parquet(os.path.join(outpath, f'ecdf_{desc}_{m:02}.parquet'))
+                ecdf_m.to_parquet(os.path.join(outpath, desc, f'ecdf_{m:02}.parquet'))
 
     def from_file(self, inpath, desc):
         """Load model from disk.
@@ -337,12 +337,12 @@ class Weather():
         if self.standardise:
             # Manually create format required by kdetools
             for m in range(1, 13, 1):
-                ecdf_m = pd.read_parquet(os.path.join(inpath, f'ecdf_{desc}_{m:02}.parquet'))
+                ecdf_m = pd.read_parquet(os.path.join(inpath, desc, f'ecdf_{m:02}.parquet'))
                 self.grids[m] = ecdf_m.loc['grids'].to_numpy()
                 self.cdfs[m] = ecdf_m.loc['cdfs'].to_numpy()
 
     def to_oasis(self, haz_df, outpath, kind='stoc', bounds=(0, 0, 0.5, 1),
-                 nbins=51, qid_res=5/60):
+                 nbins=51, qid_res=5/60):  # TODO Sort out references to qids
         """Convert data to Oasis hazard format.
 
         This method is consistent with Oasis ODS v{x.xx} and produces 4 tables:
@@ -380,7 +380,7 @@ class Weather():
         occurrence_lt = occurrence_lt[['event_id','period_no','occ_year','occ_month','occ_day']]
 
         # areaperil_dict
-        lons, lats = qg.qids2lls(haz_df.columns.astype(int), res_target=qid_res)
+        lons, lats = qg.qids2lls(haz_df.columns.astype(int), res_target=qid_res) # TODO Replace qg.qids2lls with generic mapping
         areaperil_dict = pd.DataFrame({'areaperil_id': haz_df.columns.values,
                                        'lat': lats, 'lon': lons})
 
@@ -404,53 +404,106 @@ class Weather():
                 'occurrence_lt': occurrence_lt}
 
 class Model():
-    def __init__(self, weatherpc_inpath, telehist_inpath, telefore_inpath=None,
-                 seed=42):
-        """Fit and apply weather generation model.
+    def __init__(self, seed=42):
+        """Fit and simulate from weather generator model.
 
         Parameters
         ----------
-        weatherpc_inpath : str
-            Path to processed historic weather data.
-        telehist_inpath : str
-            Path to processed historic teleconnection data.
-        telefore_inpath : str, optional
-            Path to processed historic teleconnection data.
         seed : int, optional
             Seed or random number generator state variable.
         """
 
-        self.weatherpc_inpath = weatherpc_inpath
-        self.telehist_inpath = telehist_inpath
-        self.telefore_inpath = telefore_inpath
         self.rng = np.random.RandomState(seed)
 
-    def load_weather_data(self, names):
-        """Load historic pre-processed weather data from disk.
+    def load_weather_PCs(self, inpath, regvars):
+        """Load historic pre-processed weather PCs from disk.
 
         Parameters
         ----------
-        names : list or tuple
-            Iterable of region-level weather model names.
+        inpath : str
+            Path to processed historic weather PC data.
+        regvars : list or tuple
+            Iterable of region-variable weather model names.
         """
 
         # Load weather PCs from multiple regions as a single DataFrame
-        weatherPCs = {name: pd.read_parquet(os.path.join(self.weatherpc_inpath, name, 'PCs.parquet'))
-                      for name in names}
+        weatherPCs = {regvar: pd.read_parquet(os.path.join(inpath, regvar, 'PCs.parquet'))
+                      for regvar in regvars}
         self.weatherPCs = pd.concat(weatherPCs, axis=1, names=['regvar','pc'])
 
-    def load_tele_data(self, name):
-        """Load historic pre-processed teleconnection data from disk.
+    def load_tele_PCs(self, inpath, desc):
+        """Load historic pre-processed SST PC data from disk.
 
         Parameters
         ----------
-        name : str
-            Name of teleconnection data model.
+        inpath : str
+            Path to processed historic SST PC data.
+        desc : str
+            Data description.
         """
 
         # Load teleconnection SST PCs
-        self.tele = TeleSST()
-        self.tele.from_file(self.telehist_inpath, name)
+        self.telePCs = pd.read_parquet(os.path.join(inpath, desc, 'PCs.parquet'))
+
+    def load_fore_PCs(self, inpath, desc, fyear, fmonth):
+        """Load forecast pre-processed SST PC data from disk.
+
+        Parameters
+        ----------
+        inpath : str
+            Path to processed forecast SST PC data.
+        desc : str
+            Data description.
+        fyear : int
+            Effective year of forecast.
+        fmonth : int
+            Effective month of forecast.
+        """
+
+        # Load forecast teleconnection (SST) PCs
+        fname = f'PCs_{fyear}_{fmonth:02}.parquet'
+        forePCs = pd.read_parquet(os.path.join(inpath, desc, fname))
+
+        # Assumes ECMWF SEAS5 forecasts to set up stochastic forecast
+        N_ens = 51 if fyear > 2016 else 25
+
+        # Initial values are SST PCs from (fyear, fmonth)
+        forePCs0 = pd.concat({i+1: self.telePCs.loc[[(fyear, fmonth)]]
+                              for i in range(N_ens)}, names=['number'])
+
+        self.forePCs = pd.concat([forePCs0, forePCs]).sort_index()
+
+
+    def make_forcing(self, N_batches, year_range=(None, None), forecast=False):
+        """Generate stochastic forcing by repeating historic/forecast SST PCs.
+
+        Parameters
+        ----------
+            N_batches : int
+                Number of batches to simulate.
+            year_range : (int, int), optional
+                Year range of SST PCs to repeat. Detaults to (None, None).
+            forecast : bool, optional
+                Flag if SST PCs are forecast. Defaults to False (historic).
+
+        Returns
+        -------
+            forcing : DataFrame
+                Stochastic forcing.
+        """
+
+        if forecast:
+            forcing = pd.concat({b+1: self.forePCs for b in range(N_batches)},
+                                 names=['batch'])
+            # Merge 'batch' and 'number' levels into single 'batch' level
+            years = forcing.index.get_level_values('year')
+            months = forcing.index.get_level_values('month')
+            forcing.index = [forcing.index.map(lambda x: (x[0]*100+x[1])
+                                               ).rename('batch'), years, months]
+        else:
+            forcing = pd.concat({b+1: self.telePCs.loc[slice(*year_range)]
+                                 for b in range(N_batches)},  names=['batch'])
+        return forcing
 
     def PCs_to_multiPCs(self):
         """Calculate EOFs and PCs of multiple region-variables.
@@ -476,7 +529,8 @@ class Model():
                                                    ).rename_axis('pc_multi', axis=1)
         self.N_multiPCs = self.multiPCs.shape[1]
 
-    def multiPCs_to_PCs(self, multiPCs, bias_correct=True, whiten=True):
+    def multiPCs_to_PCs(self, multiPCs, bias_correct=True, whiten=True,
+                        forecast=False):
         """Calculate individual PCs from multiPCs.
 
         Parameters
@@ -488,6 +542,8 @@ class Model():
                 mean correction.
             whiten : bool, optional
                 Decorrelate PCs using ZCA-Mahalanobis transformation by month.
+            forecast : bool, optional
+                Flag if forecast or not.
 
         Returns
         -------
@@ -499,19 +555,30 @@ class Model():
         weatherPCs = pd.concat({m: multiPCs.xs(m, level='month') @
                                 self.multiEOFs.xs(m, level='month')
                                 for m in months}, names=['month'])
+        cols = weatherPCs.columns.unique(level='regvar')
 
-        # Bias correct standard deviation
-        if bias_correct:
-            bias_fac = (self.weatherPCs.groupby(level='month').std()/
-                        weatherPCs.groupby(level='month').std())
-            weatherPCs = weatherPCs * bias_fac
+        # Bias correct standard deviation only for non-forecast case
+        if forecast:
+            _, _, fmonth = multiPCs.index[0]
+            if bias_correct:
+                print('Warning: bias_correct=True has no effect for forecasts')
 
-        if whiten:
-            cols = weatherPCs.columns.unique(level='regvar')
-            return pd.concat({c: self.whiten(weatherPCs[c]) for c in cols},
-                             names=['regvar'], axis=1)
+            # If whitening a forecast, do *not* whiten first month as it's fixed
+            if whiten:
+                weatherPCs = pd.concat([weatherPCs.xs(fmonth, level='month', drop_level=False),
+                                        self.whiten(weatherPCs.drop(fmonth, level='month'))])
         else:
-            return weatherPCs
+            # Bias correct standard deviation
+            if bias_correct:
+                bias_fac = (self.weatherPCs.groupby(level='month').std()/
+                            weatherPCs.groupby(level='month').std())
+                weatherPCs = weatherPCs * bias_fac
+
+            if whiten:
+                weatherPCs = pd.concat({c: self.whiten(weatherPCs[c]) for c in cols},
+                                       names=['regvar'], axis=1)
+
+        return weatherPCs.reorder_levels(multiPCs.index.names).sort_index()
 
     def make_depn(self, p_thresh=0.05, max_feats=3, topM=None):
         """Make endogenous dependency dictionary for SCSKDE model.
@@ -592,12 +659,12 @@ class Model():
 
         corr0, corr1, pval0, pval1 = {}, {}, {}, {}
         wcols, M = self.multiPCs.columns, self.multiPCs.shape[1]
-        tcols = self.tele.PCs.columns[:topM].rename('tele')
-        tcols_1 = self.tele.PCs.columns[:topM].rename('tele-1')
+        tcols = self.telePCs.columns[:topM].rename('tele')
+        tcols_1 = self.telePCs.columns[:topM].rename('tele-1')
         for m in range(1, 13):
             a = self.multiPCs.xs(m, level='month')
-            b = self.tele.PCs[tcols].xs(m, level='month')
-            c = self.tele.PCs[tcols_1].shift(1).xs(m, level='month')
+            b = self.telePCs[tcols].xs(m, level='month')
+            c = self.telePCs[tcols_1].shift(1).xs(m, level='month')
             ix0 = a.index.intersection(b.index)
             ix1 = a.index.intersection(c.index)
             r0, p0 = st.spearmanr(a.reindex(ix0), b.reindex(ix0), alternative='two-sided')
@@ -638,32 +705,11 @@ class Model():
 
         depn = self.make_depn(p_thresh_n, max_feats_n)
         depx = self.make_depx(p_thresh_x, max_feats_x)
-        ix = self.multiPCs.index.intersection(self.tele.PCs.index)
+        ix = self.multiPCs.index.intersection(self.telePCs.index)
         periods = self.multiPCs.reindex(ix).index.get_level_values('month').to_numpy()
         self.model = sk.SCSKDE(ordern=1, orderx=1, bw_method='silverman_ref')
         self.model.fit(Xn=self.multiPCs.reindex(ix).values, depn=depn,
-                       Xx=self.tele.PCs.reindex(ix).values, depx=depx, periods=periods)
-
-    def make_stoc_tele(self, year_range, N_batches):
-        """Generate stochastic teleconnections by repeating historic SST PCs.
-
-        Parameters
-        ----------
-            year_range : (int, int)
-                Year range of SST PCs to repeat.
-            N_batches : int
-                Number of batches to simulate.
-
-        Returns
-        -------
-            stoc_tele : DataFrame
-                Stochastic teleconnections.
-        """
-
-        stoc_tele = pd.concat({b+1: self.tele.PCs.loc[slice(*year_range)]
-                               for b in range(N_batches)},
-                               names=['batch','year','month'])
-        return stoc_tele
+                       Xx=self.telePCs.reindex(ix).values, depx=depx, periods=periods)
 
     def whiten(self, PCs):
         """Decorrelate data.
@@ -687,6 +733,9 @@ class Model():
                 Decorrelated PCs.
         """
 
+        # Note original MultiIndex level order
+        levels = PCs.index.names
+
         PCs_dc = {}
         for m in PCs.index.unique(level='month'):
             X = PCs.xs(m, level='month')
@@ -697,10 +746,8 @@ class Model():
             Z = X @ W.T
             Z.columns = X.columns
             PCs_dc[m] = Z * X.std()
-        PCs_dc = pd.concat(PCs_dc, names=['month'])
-        levels = PCs_dc.index.names
-        PCs_dc = PCs_dc.reorder_levels(levels[1:]+[levels[0]]).sort_index()
-        return PCs_dc
+        return pd.concat(PCs_dc, names=['month']
+                         ).reorder_levels(levels).sort_index()
 
     def make_multiPCs0(self, month0, N_batches):
         """Generate initial values for multiPCs for a reference month by
@@ -725,7 +772,8 @@ class Model():
         return pd.DataFrame(self.rng.normal(mus, sigs, size=(N_batches, sigs.size)),
                             columns=self.multiPCs.columns)
 
-    def simulate(self, multiPCs0, telePCs, seed=42, bias_correct=True, whiten=True):
+    def simulate(self, multiPCs0, forcing, seed=42, bias_correct=True,
+                 whiten=True, forecast=False):
         """Generate stochastic set forced by teleconnections.
 
         Parameters
@@ -734,14 +782,17 @@ class Model():
                 Initial multiPCs at single timestep as the weather generator is
                 a lag-1 Markov model. If a Series of shape (n,) or a DataFrame
                 of shape (n_batches, n), reshape into a (n_batches, 1, n) array.
-            telePCs : DataFrame
-                Teleconnection forcing.
+            forcing : DataFrame
+                Stochastic or forecast-stochastic teleconnection forcing.
+                MultiIndex with (batch, year, month).
             seed : int, optional
                 Seed or random number generator state variable.
             bias_correct : bool, optional
                 Bias correct standard deviation [mean zeroed automatically].
             whiten : bool, optional
                 Decorrelate PCs using ZCA-Mahalanobis transformation by month.
+            forecast : bool, optional
+                Flag if forecast or not.
 
         Returns
         -------
@@ -749,12 +800,16 @@ class Model():
                 Stochastic multiPCs.
         """
 
-        batches = telePCs.index.unique(level='batch')
-        years = telePCs.index.unique(level='year')
-        telePCs_np = telePCs.to_numpy().reshape(batches.size, years.size*12, -1)
+        batches = forcing.index.unique(level='batch')
+        years = forcing.index.unique(level='year')
 
-        # Define period (i.e. month) labels
-        periods_sim = np.arange(years.size*12) % 12 + 1
+        if forecast:
+            _, _, fmonth = forcing.index[0]
+            forcing_np = forcing.to_numpy().reshape(batches.size, 7, -1)
+            periods_sim = (np.arange(fmonth, fmonth+7) - 1) % 12 + 1
+        else:
+            forcing_np = forcing.to_numpy().reshape(batches.size, years.size*12, -1)
+            periods_sim = np.arange(years.size*12) % 12 + 1
 
         # Handle fixed or variable intial conditions
         if len(multiPCs0.shape) == 1:
@@ -763,73 +818,39 @@ class Model():
             X0 = multiPCs0.to_numpy()[:,None]
 
         # Run simulation and post-process
-        stoc_raw = self.model.simulate(years.size*12, X0=X0, Xx=telePCs_np,
-                                       batches=batches.size,
-                                       periods=periods_sim, seed=seed)
-        stoc_df = pd.DataFrame(stoc_raw.reshape(-1, self.N_multiPCs),
-                               index=telePCs.index).rename_axis('pc_multi', axis=1)
-
-        # Zero-mean simulated multiPCs and bias correct standard deviation
-        stoc_zm = stoc_df - stoc_df.groupby(level='month').mean()
-        if bias_correct:
-            bias_fac = (self.multiPCs.groupby(level='month').std()/
-                        stoc_zm.groupby(level='month').std())
-            stoc = stoc_zm * bias_fac
+        if forecast:
+            stoc_raw = self.model.simulate(7, X0=X0, Xx=forcing_np,
+                                           batches=batches.size,
+                                           periods=periods_sim, seed=seed)
         else:
-            stoc = stoc_zm
+            stoc_raw = self.model.simulate(years.size*12, X0=X0, Xx=forcing_np,
+                                           batches=batches.size,
+                                           periods=periods_sim, seed=seed)
+        stoc = pd.DataFrame(stoc_raw.reshape(-1, self.N_multiPCs),
+                            index=forcing.index).rename_axis('pc_multi', axis=1)
 
-        if whiten:
-            return self.whiten(stoc)
+        # Don't zero-mean and bias correct simulated multiPCs for forecasts
+        if forecast:
+            if bias_correct:
+                print('Warning: bias_correct=True has no effect for forecasts')
+
+            # If whitening a forecast, do *not* whiten first month as it's fixed
+            if whiten:
+                stoc = pd.concat([stoc.xs(fmonth, level='month', drop_level=False),
+                                  self.whiten(stoc.drop(fmonth, level='month'))])
         else:
-            return stoc
+            stoc_zm = stoc - stoc.groupby(level='month').mean()
+            if bias_correct:
+                bias_fac = (self.multiPCs.groupby(level='month').std()/
+                            stoc_zm.groupby(level='month').std())
+                stoc = stoc_zm * bias_fac
+            else:
+                stoc = stoc_zm
 
-    def forecast(self, fmonth, fyear, N_batches, seed=42):
-        """Generate forecast-stochastic set forced by SEAS5 SST forecast.
+            if whiten:
+                stoc = self.whiten(stoc)
 
-        Parameters
-        ----------
-            fmonth : int
-                Effective month of forecast.
-            fyear : int
-                Effective year of forecast.
-            N_batches : int
-                Number of batches to simulate.
-            seed : int, optional
-                Seed or random number generator state variable.
-
-        Returns
-        -------
-            stoc_forecast : DataFrame
-                Stochastic forecast multiPCs.
-        """
-
-        # Assumes ECMWF SEAS5 forecasts to set up stochastic forecast
-        N_ens = 51 if fyear > 2016 else 25
-
-        # Define initial values
-        multiPCs_init = np.repeat(self.multiPCs.loc[fyear, fmonth].values[None,:],
-                                  N_ens*N_batches, axis=0)[:,None]
-        telePCs_init = pd.concat({i+1: self.tele.PCs.loc[[(fyear, fmonth)]]
-                                  for i in range(N_ens)}, names=['number'])
-
-        # Load forecast SST data, project onto SST EOFs and convert to numpy
-        self.tele.calc_anoms_forecast(self.telefore_inpath, fyear, fmonth)
-        self.tele.anoms_fore = self.tele.anoms_fore.assign_coords(number=self.tele.anoms_fore.number+1)
-        telePCs_fore = self.tele.project(self.tele.anoms_fore)
-        telePCs = pd.concat([telePCs_init, telePCs_fore]).sort_index()
-        telePCs = pd.concat({batch+1: telePCs
-                             for batch in range(N_batches)}, names=['batch'])
-        telePCs_np = telePCs.to_numpy().reshape(N_ens*N_batches, 7, -1)
-
-        # Define period (i.e. month) labels
-        periods_sim = (np.arange(fmonth, fmonth+7) - 1) % 12 + 1
-
-        # Run simulation and post-process
-        stoc_forecast = self.model.simulate(7, X0=multiPCs_init, Xx=telePCs_np,
-                                            batches=N_ens*N_batches,
-                                            periods=periods_sim, seed=seed)
-        return pd.DataFrame(stoc_forecast.reshape(-1, self.N_multiPCs),
-                            index=telePCs.index).rename_axis('pc_multi', axis=1)
+        return stoc.sort_index()
 
     def to_file(self, outpath, desc):
         """Save model to disk.
