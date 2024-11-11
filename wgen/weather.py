@@ -216,19 +216,22 @@ class Weather():
         writeable = outpath is not None and regvar is not None
 
         # Combine EOFs and PCs to get anomalies
-        Zgen = {}
-
         # If processing stochastic data, don't concat Zgen dict for efficiency
         if 'batch' in PCs.index.names:
+            if outpath is None:
+                print('For stochastic output, outpath must not be None')
+                return None
+
+            print('Saving stochastic output to disk...')
             for b in tqdm(PCs.index.unique(level='batch'), disable=self.tqdm):
                 PCs_batch = PCs.loc[b]
-                Zgen[b] = pd.concat([PC.dropna(axis=1) @ self.EOFs.loc[m]
-                                     for m, PC in PCs_batch.groupby(level='month')]
-                                     ).reorder_levels(PCs_batch.index.names).sort_index()
+                Zgen = pd.concat([PC.dropna(axis=1) @ self.EOFs.loc[m]
+                                  for m, PC in PCs_batch.groupby(level='month')]
+                                  ).reorder_levels(PCs_batch.index.names).sort_index()
                 if writeable:
                     fname = f'{regvar}_Zgen_batch{b:03}.parquet'
-                    Zgen[b].to_parquet(os.path.join(outpath, fname))
-            self.Zgen = Zgen
+                    Zgen.to_parquet(os.path.join(outpath, fname))
+            self.Zgen = None
         else:
             Zgen = pd.concat([PC.dropna(axis=1) @ self.EOFs.loc[m]
                               for m, PC in PCs.groupby(level='month')]
