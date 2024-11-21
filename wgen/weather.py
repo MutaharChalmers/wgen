@@ -158,8 +158,8 @@ class Weather():
                              for i in buff_rng if i!=0], axis=0)
         troughs_buff = np.sum([np.roll(troughs, i, axis=0) * sflag
                                for i in buff_rng if i!=0], axis=0)
-        self.maxima = peaks
-        self.minima = troughs
+        self.maxima = pd.DataFrame(peaks, index=clims.index, columns=clims.columns)
+        self.minima = pd.DataFrame(troughs, index=clims.index, columns=clims.columns)
         self.seas_maxima = pd.DataFrame(peaks + peaks_buff, index=clims.index,
                                         columns=clims.columns)
         self.seas_minima = pd.DataFrame(troughs + troughs_buff, index=clims.index,
