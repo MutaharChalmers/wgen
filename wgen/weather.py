@@ -350,68 +350,6 @@ class Weather():
                 self.grids[m] = ecdf_m.loc['grids'].to_numpy()
                 self.cdfs[m] = ecdf_m.loc['cdfs'].to_numpy()
 
-    def to_oasis(self, haz_df, outpath, kind='stoc', bounds=(0, 0, 0.5, 1),
-                 nbins=51, qid_res=5/60):  # TODO Sort out references to qids
-        """Convert data to Oasis hazard format.
-
-        This method is consistent with Oasis ODS v{x.xx} and produces 4 tables:
-        - event : list of event_id values
-        - areaperil_dict : mapping between areaperil_id and (lon, lat) coords
-        - intensity_bin_dict : mapping from intensity_bin_index to hazard
-        - footprint : list of event_id, areaperil_id and intensity_bin_index
-        - occurrence_lt : event occurrence lookup table
-
-        The method needs additional information to decide how to encode the
-        raw hazard data; this information is defined in the method arguments.
-        """
-
-        # event and occurence_lt
-        occlt = haz_df.index.to_frame(index=False)
-        if kind in ['hist','hist-detr']:
-            event = pd.Series([f'{y:04}{m:02}' for y, m in occlt.values],
-                              name='event_id').astype(int)
-            occurrence_lt = occlt.add_prefix('occ_')
-        elif kind == 'stoc':
-            event = pd.Series([f'{b}{y:04}{m:02}' for b, y, m in occlt.values],
-                              name='event_id').astype(int)
-            occurrence_lt = occlt.drop('batch', axis=1).add_prefix('occ_')
-        elif kind == 'stoc-fore':
-            event = pd.Series([f'{b}{n:02}{y:04}{m:02}' for b, n, y, m in occlt.values],
-                              name='event_id').astype(int)
-            occurrence_lt = occlt.drop(['batch','number'], axis=1).add_prefix('occ_')
-        else:
-            print('kind must be one of hist, hist-detr, stoc, stoc-fore')
-            return None
-
-        occurrence_lt['occ_day'] = 1
-        occurrence_lt['event_id'] = event
-        occurrence_lt['period_no'] = occurrence_lt['occ_year']
-        occurrence_lt = occurrence_lt[['event_id','period_no','occ_year','occ_month','occ_day']]
-
-        # areaperil_dict
-        lons, lats = qg.qids2lls(haz_df.columns.astype(int), res_target=qid_res) # TODO Replace qg.qids2lls with generic mapping
-        areaperil_dict = pd.DataFrame({'areaperil_id': haz_df.columns.values,
-                                       'lat': lats, 'lon': lons})
-
-        # intensity_bin_dict
-        llb, lb, ub, uub = bounds
-        hazbins = np.unique(np.r_[llb, np.linspace(lb, ub, nbins), uub])
-        bin_ix = range(1, hazbins.size)
-        intensity_bin_dict = pd.DataFrame(zip(bin_ix, hazbins[:-1], hazbins[1:]),
-                                          columns=['bin_index','bin_from','bin_to'])
-
-        # footprint
-        footprint = haz_df.rename_axis('areaperil_id', axis=1)
-        footprint.index = pd.Index(event)
-        footprint = pd.cut(footprint.stack(), bins=hazbins, labels=bin_ix,
-                           right=False).astype(int).rename('intensity_bin_index').reset_index()
-        footprint['prob'] = 1.
-
-        # Write files to disk [return for testing]
-        return {'event': event, 'areaperil': areaperil_dict,
-                'intensity_bin': intensity_bin_dict, 'footprint': footprint,
-                'occurrence_lt': occurrence_lt}
-
 class Model():
     def __init__(self, seed=42):
         """Fit and simulate from weather generator model.
