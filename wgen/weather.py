@@ -229,7 +229,7 @@ class Weather():
                                   for m, PC in PCs_batch.groupby(level='month')]
                                   ).reorder_levels(PCs_batch.index.names).sort_index()
                 if writeable:
-                    fname = f'{regvar}_Zgen_batch{b:03}.parquet'
+                    fname = f'{regvar}_Zgen_batch{b:04}.parquet'
                     Zgen.to_parquet(os.path.join(outpath, fname))
             self.Zgen = None
         else:
