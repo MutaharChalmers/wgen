@@ -194,7 +194,7 @@ class Weather():
         self.EOFs = pd.concat(EOFs, names=['month','pc'])
         self.PCs = pd.concat(PCs, names=['month']).rename_axis('pc', axis=1)
 
-    def PCs_to_anoms(self, PCs, outpath=None, regvar=None):
+    def PCs_to_anoms(self, PCs, outpath=None, regvar=None, verbose=False):
         """Calculate monthly anomalies from PCs using existing EOFs.
 
         Parameters
@@ -205,6 +205,8 @@ class Weather():
                 File path for output. If None, values are returned.
             regvar : str, optional
                 Region-variable description for filename.
+            verbose : bool, optional
+                Print messages or not.
 
         Returns
         -------
@@ -221,8 +223,8 @@ class Weather():
             if outpath is None:
                 print('For stochastic output, outpath must not be None')
                 return None
-
-            print('Saving stochastic output to disk...')
+            if verbose:
+                print('Saving stochastic output to disk...')
             for b in tqdm(PCs.index.unique(level='batch'), disable=self.tqdm):
                 PCs_batch = PCs.loc[b]
                 Zgen = pd.concat([PC.dropna(axis=1) @ self.EOFs.loc[m]
