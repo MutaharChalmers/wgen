@@ -362,7 +362,7 @@ class Model():
             Seed or random number generator state variable.
         """
 
-        self.model = sk.SCSKDE(ordern=ordern, orderx=orderx, bw_method=bw_method, bw_type=bw_type))
+        self.model = sk.SCSKDE(ordern=ordern, orderx=orderx, bw_method=bw_method, bw_type=bw_type)
         self.rng = np.random.RandomState(seed)
 
     def load_weather_PCs(self, inpath, regvars):
