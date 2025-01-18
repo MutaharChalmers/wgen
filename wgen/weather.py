@@ -353,7 +353,7 @@ class Weather():
                 self.cdfs[m] = ecdf_m.loc['cdfs'].to_numpy()
 
 class Model():
-    def __init__(self, seed=42):
+    def __init__(self, ordern=1, orderx=1, bw_method='silverman_ref', bw_type='covariance', seed=42):
         """Fit and simulate from weather generator model.
 
         Parameters
@@ -362,6 +362,7 @@ class Model():
             Seed or random number generator state variable.
         """
 
+        self.model = sk.SCSKDE(ordern=ordern, orderx=orderx, bw_method=bw_method, bw_type=bw_type))
         self.rng = np.random.RandomState(seed)
 
     def load_weather_PCs(self, inpath, regvars):
@@ -656,7 +657,6 @@ class Model():
         depx = self.make_depx(p_thresh_x, max_feats_x)
         ix = self.multiPCs.index.intersection(self.telePCs.index)
         periods = self.multiPCs.reindex(ix).index.get_level_values('month').to_numpy()
-        self.model = sk.SCSKDE(ordern=1, orderx=1, bw_method='silverman_ref')
         self.model.fit(Xn=self.multiPCs.reindex(ix).values, depn=depn,
                        Xx=self.telePCs.reindex(ix).values, depx=depx, periods=periods)
 
