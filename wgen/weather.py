@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import os
+import json
 import datetime
 import numpy as np
 import pandas as pd
@@ -45,8 +46,12 @@ class Weather():
             self.grids = {}
             self.cdfs = {}
 
-        self.tqdm = not tqdm
         self.now = datetime.datetime.now()
+        self.meta = {'standardise': standardise, 'N_KDE': N_KDE,
+                     'buffer_bws': buffer_bws, 'seed': seed,
+                     'timestamp': self.now.strftime('%Y-%m-%d %H:%M:%S')}
+
+        self.tqdm = not tqdm
 
     def calc_anoms(self, data, year_range, clims, min_bw=1e-18, noise_sig=1e-18):
         """Calculate anomalies from weather data for a single region-variable.
@@ -112,9 +117,9 @@ class Weather():
 
         # Zero-mean data by month to prepare for PCA
         self.Zmean = Z.groupby(level='month').mean()
-        self.Zin = Z - self.Zmean
+        self.Z = Z - self.Zmean
 
-    def clims_to_seasons(self, clim_year, buffer=(1, 1), max_nseas=2):
+    def clims_to_seasons(self, clim_year, tol=0.5, kern=[1,2,1]):
         """Identify seasons using changes in monthly climatology.
 
         Used for hydrological seasons, which can follow different patterns
@@ -124,46 +129,54 @@ class Weather():
         ----------
             clim_year : int
                 Reference climatology to use.
-            buffer : (int, int), optional
-                Number of months to buffer either side of seasonal max or min.
-                Defaults to (1, 1).
-            max_nseas : int, optional
-                Maximum number of seasons to apply buffer. Defaults to 2.
-                For cells with more nominal seasons as identified by local
-                peaks, buffer is only applied to the largest max_nseas ones.
+            tol : float, optional
+                Number in (0, 1) which multiplies the difference between the
+                climatological 'ceiling' and 'floor' to calculate a threshold
+                above the climatological 'floor'. Months with a climatology
+                greater than the floor+threshold are considered 'in-season'.
+            kern : list or ndarray, optional
+                Climatology smoothing kernel with odd number of elements.
+                Only non-zero elements specified - zero-padded as required.
         """
 
-        # Make DataFrame of buffered monthly climatologies
+        self.meta['seas_climyear'] = clim_year
+        self.meta['seas_kern'] = kern
+        self.meta['seas_tol'] = tol
+
         clims = self.clims.loc[clim_year]
+
+        # Define function to do circular convolution for smoothing
+        def cconv(X, kern, axis=0):
+            return np.fft.irfft((np.fft.rfft(X, axis=axis).T *
+                                    np.fft.rfft(kern)).T, axis=axis)
+
+        # Smooth using centred circular convolution of monthly climatology
+        kwts = np.atleast_1d(kern)/sum(kern)
+        kernel = np.roll(np.pad(kwts, (0, 12-kwts.size)), -(kwts.size//2))
+        clims_smooth = pd.DataFrame(cconv(clims, kernel, axis=0),
+                                    index=clims.index, columns=clims.columns)
+
+        # Make DataFrame of buffered monthly climatologies
         clims_wrap = np.vstack([clims.loc[12], clims, clims.loc[1]])
+        clims_smooth_wrap = np.vstack([clims_smooth.loc[12], clims_smooth, clims_smooth.loc[1]])
 
-        # Annual 25th and 75th climate percentiles - used heuristically for
-        # more robust identification of peaks
-        cq25, cq75 = clims.rank(axis=0)>3, clims.rank(axis=0)<9
-
-        # Calculate extrema
+        # Calculate extrema - smooth for maxima, not for minima
         extrema = np.diff(np.sign(np.diff(clims_wrap, axis=0)), axis=0)
-        maxima, minima = np.where(extrema<0, 1, 0), np.where(extrema>0, 1, 0)
-        maxima_filt = (maxima>0) & cq25
-        minima_filt = (minima>0) & cq75
-        peaks = np.where(maxima_filt, np.cumsum(maxima_filt, axis=0), 0)
-        troughs = np.where(minima_filt, -np.cumsum(minima_filt, axis=0), 0)
+        extrema_smooth = np.diff(np.sign(np.diff(clims_smooth_wrap, axis=0)), axis=0)
+        maxima, minima = np.where(extrema_smooth<0, 1, 0), np.where(extrema>0, 1, 0)
 
-        # Buffer months around extrema only if # seasons <= max_nseas
-        self.nseas = pd.Series(np.count_nonzero(peaks, axis=0),
-                               index=clims.columns)
-        sflag = np.where(self.nseas<=max_nseas, 1, 0)
-        buff_rng = range(-buffer[0], buffer[1]+1)
-        peaks_buff = np.sum([np.roll(peaks, i, axis=0) * sflag
-                             for i in buff_rng if i!=0], axis=0)
-        troughs_buff = np.sum([np.roll(troughs, i, axis=0) * sflag
-                               for i in buff_rng if i!=0], axis=0)
-        self.maxima = pd.DataFrame(peaks, index=clims.index, columns=clims.columns)
-        self.minima = pd.DataFrame(troughs, index=clims.index, columns=clims.columns)
-        self.seas_maxima = pd.DataFrame(peaks + peaks_buff, index=clims.index,
-                                        columns=clims.columns)
-        self.seas_minima = pd.DataFrame(troughs + troughs_buff, index=clims.index,
-                                        columns=clims.columns)
+        # Calculate climatology threshold to identify in-season months
+        ceil = pd.concat([clims.where(maxima > 0)]*3).interpolate()[12:24]
+        floor = pd.concat([clims.where(minima > 0)]*3).interpolate()[12:24]
+        seas_filt = (ceil - floor)*tol + floor
+        seas_mask = clims > seas_filt
+        self.ceil = ceil
+        self.floor = floor
+
+        # Label seasons
+        labels = (seas_mask.astype(int).diff()>0).astype(int).cumsum()
+        nseas = labels.max(axis=0)
+        self.seas = labels.where(labels>0, nseas, axis=1).where(seas_mask, 0)
 
     def anoms_to_PCs(self, wts=None):
         """Calculate EOFs and PCs of monthly anomalies.
@@ -179,13 +192,13 @@ class Weather():
             self.wts = 1
 
         # Keep one less EOFs/PCs than the number of unique years
-        n = self.Zin.index.unique(level='year').size - 1
+        n = self.Z.index.unique(level='year').size - 1
 
         # Calculate EOFs and PCs for each month
         EOFs, PCs = {}, {}
 
         for m in tqdm(range(1, 13), disable=self.tqdm):
-            X = self.Zin.xs(m, level='month') * self.wts
+            X = self.Z.xs(m, level='month') * self.wts
             _, _, V = np.linalg.svd(X, full_matrices=False)
             EOFs[m] = pd.DataFrame(V[:n,:], columns=X.columns)
             PCs[m] = X @ EOFs[m].T
@@ -193,6 +206,12 @@ class Weather():
         # Convert to DataFrames
         self.EOFs = pd.concat(EOFs, names=['month','pc'])
         self.PCs = pd.concat(PCs, names=['month']).rename_axis('pc', axis=1)
+
+        # Estimate PCs' normality by month using Shapiro-Wilk test p-values
+        swpvals = {(m, pc): st.shapiro(self.PCs.xs(m, level='month')[pc]).pvalue
+                   for m in tqdm(range(1,13)) for pc in self.PCs.columns}
+        self.swpvals = pd.Series(swpvals).rename_axis(['month','pc']).unstack('month')
+
 
     def PCs_to_anoms(self, PCs, outpath=None, regvar=None, verbose=False):
         """Calculate monthly anomalies from PCs using existing EOFs.
@@ -316,10 +335,18 @@ class Weather():
         if not os.path.exists(os.path.join(outpath, desc)):
             os.makedirs(os.path.join(outpath, desc))
 
+        # Save metadata
+        with open(os.path.join(outpath, desc, 'meta.json'), 'w') as f:
+            json.dump(self.meta, f, sort_keys=True, indent=4)
+
         self.clims.to_parquet(os.path.join(outpath, desc, 'clims.parquet'))
         self.Zmean.to_parquet(os.path.join(outpath, desc, 'Zmean.parquet'))
         self.EOFs.to_parquet(os.path.join(outpath, desc, 'EOFs.parquet'))
         self.PCs.to_parquet(os.path.join(outpath, desc, 'PCs.parquet'))
+        self.swpvals.to_parquet(os.path.join(outpath, desc, 'swpvals.parquet'))
+        self.Z.to_parquet(os.path.join(outpath, desc, 'Z.parquet'))
+        self.seas.to_parquet(os.path.join(outpath, desc, 'seas.parquet'))
+
 
         if self.standardise:
             # Manually create format required by kdetools
@@ -340,28 +367,57 @@ class Weather():
                 Description of model.
         """
 
+        # Load metadata
+        with open(os.path.join(inpath, desc, 'meta.json', 'r')) as f:
+            self.meta = json.load(f)
+
         self.clims = pd.read_parquet(os.path.join(inpath, desc, 'clims.parquet'))
         self.Zmean = pd.read_parquet(os.path.join(inpath, desc, 'Zmean.parquet'))
         self.EOFs = pd.read_parquet(os.path.join(inpath, desc, 'EOFs.parquet'))
         self.PCs = pd.read_parquet(os.path.join(inpath, desc, 'PCs.parquet'))
+        self.swpvals = pd.read_parquet(os.path.join(inpath, desc, 'swpvals.parquet'))
+        self.Z = pd.read_parquet(os.path.join(inpath, desc, 'Z.parquet'))
+        self.seas = pd.read_parquet(os.path.join(inpath, desc, 'seas.parquet'))
+
+        self.standardise = self.meta['standardise']
+        self.rng = np.random.RandomState(int(self.meta['seed']))
 
         if self.standardise:
+            self.ecdf = kt.kdecdf(N=int(self.meta['N_KDE']),
+                                  buffer_bws=int(self.meta['buffer_bws']))
+
             # Manually create format required by kdetools
             for m in range(1, 13, 1):
                 ecdf_m = pd.read_parquet(os.path.join(inpath, desc, f'ecdf_{m:02}.parquet'))
                 self.grids[m] = ecdf_m.loc['grids'].to_numpy()
                 self.cdfs[m] = ecdf_m.loc['cdfs'].to_numpy()
 
+
 class Model():
-    def __init__(self, ordern=1, orderx=1, bw_method='silverman_ref', bw_type='covariance', seed=42):
+    def __init__(self, normalise_PCs=False, ordern=1, orderx=1,
+                 bw_method='silverman_ref', bw_type='covariance', seed=42):
         """Fit and simulate from weather generator model.
 
         Parameters
         ----------
+        normalise_PCs : boolean, optional
+            Apply ECDF transform to make weather PCs more gaussian, while
+            preserving their relative magnitudes. Defaults to False.
+        ordern : int, optional
+            Order of endogenous variables in SCSKDE model. Defaults to 1.
+        orderx : int, optional
+            Order of exdogenous variables in SCSKDE model. Defaults to 1.
+        bw_method : str, optional
+            Method for estimating KDE bandwidths. Options are 'silverman_ref'
+            (default), 'silverman', 'scott', 'cv'.
+        bw_type : str, optional
+            Type of KDE bandwidth matrix. Options are 'covariance' (default),
+            'diagonal', 'equal'.
         seed : int, optional
             Seed or random number generator state variable.
         """
 
+        self.normalise_PCs = normalise_PCs
         self.model = sk.SCSKDE(ordern=ordern, orderx=orderx, bw_method=bw_method, bw_type=bw_type)
         self.rng = np.random.RandomState(seed)
 
