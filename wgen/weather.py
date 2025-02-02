@@ -347,7 +347,10 @@ class Weather():
         self.PCs.to_parquet(os.path.join(outpath, desc, 'PCs.parquet'))
         self.swpvals.to_parquet(os.path.join(outpath, desc, 'swpvals.parquet'))
         self.Z.to_parquet(os.path.join(outpath, desc, 'Z.parquet'))
-        self.seas.to_parquet(os.path.join(outpath, desc, 'seas.parquet'))
+        try:
+            self.seas.to_parquet(os.path.join(outpath, desc, 'seas.parquet'))
+        except:
+            print('No seasons identified, so not saved to file')
 
 
         if self.standardise:
@@ -379,7 +382,10 @@ class Weather():
         self.PCs = pd.read_parquet(os.path.join(inpath, desc, 'PCs.parquet'))
         self.swpvals = pd.read_parquet(os.path.join(inpath, desc, 'swpvals.parquet'))
         self.Z = pd.read_parquet(os.path.join(inpath, desc, 'Z.parquet'))
-        self.seas = pd.read_parquet(os.path.join(inpath, desc, 'seas.parquet'))
+        try:
+            self.seas = pd.read_parquet(os.path.join(inpath, desc, 'seas.parquet'))
+        except:
+            print('No seasons identified and saved to file')
 
         self.standardise = self.meta['standardise']
         self.rng = np.random.RandomState(int(self.meta['seed']))
