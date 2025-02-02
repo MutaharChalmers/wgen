@@ -420,8 +420,14 @@ class Model():
         """
 
         self.normalise_PCs = normalise_PCs
-        self.model = sk.SCSKDE(ordern=ordern, orderx=orderx, bw_method=bw_method, bw_type=bw_type)
+        self.model = sk.SCSKDE(ordern=ordern, orderx=orderx,
+                               bw_method=bw_method, bw_type=bw_type)
         self.rng = np.random.RandomState(seed)
+        self.now = datetime.datetime.now()
+        self.meta = {'normalise_PCs': normalise_PCs,
+                     'ordern': ordern, 'orderx': orderx,
+                     'bw_method': bw_method, 'bw_type': bw_type, 'seed': seed,
+                     'timestamp': self.now.strftime('%Y-%m-%d %H:%M:%S')}
 
     def load_weather_PCs(self, inpath, regvars):
         """Load historic pre-processed weather PCs from disk.
@@ -517,14 +523,31 @@ class Model():
         """Calculate EOFs and PCs of multiple region-variables.
         """
 
+        if self.normalise_PCs:
+            self.kdecdfs = {m: kt.kdecdf(500, 5) for m in range(1, 13)}
+            PCz = {}
+
+            for m in range(1, 13):
+                PCm = self.weatherPCs.xs(m, level='month')
+                self.kdecdfs[m].fit(PCm)
+                PCz[m] = pd.DataFrame(st.norm.ppf(self.kdecdfs[m].transform(PCm)),
+                                      index=PCm.index, columns=PCm.columns)
+            PCz = pd.concat(PCz, names=['month'])
+
+            self.loc = PCz.groupby('month').mean()
+            self.scale = self.weatherPCs.groupby('month').std()/PCz.groupby('month').std()
+            weatherPCs = (PCz - self.loc) * self.scale
+        else:
+            weatherPCs = self.weatherPCs
+
         # Keep one less EOFs/PCs than the number of unique years
-        n = self.weatherPCs.index.unique(level='year').size - 1
+        n = weatherPCs.index.unique(level='year').size - 1
 
         # Calculate EOFs and PCs for each month
         multiEOFs, multiPCs = {}, {}
 
         for m in range(1, 13):
-            X = self.weatherPCs.xs(m, level='month').dropna(axis=1)
+            X = weatherPCs.xs(m, level='month').dropna(axis=1)
             _, _, V = np.linalg.svd(X, full_matrices=False)
             multiEOFs[m] = pd.DataFrame(V[:n,:], columns=X.columns)
             multiPCs[m] = X @ multiEOFs[m].T
@@ -564,6 +587,15 @@ class Model():
                                 self.multiEOFs.xs(m, level='month')
                                 for m in months}, names=['month'])
         cols = weatherPCs.columns.unique(level='regvar')
+
+        if self.normalise_PCs:
+            U = ss.ndtr(weatherPCs/self.scale + self.loc)
+            weatherPCs = {}
+            for m in range(1, 13):
+                Um = U.xs(m, level='month')
+                weatherPCs[m] = pd.DataFrame(self.kdecdfs[m].inverse(Um),
+                                             index=Um.index, columns=U.columns)
+            weatherPCs = pd.concat(weatherPCs, names=['month','year'])
 
         # Bias correct standard deviation only for non-forecast case
         if forecast:
