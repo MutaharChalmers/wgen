@@ -128,22 +128,25 @@ class Weather():
         Parameters
         ----------
             clim_year : int
-                Reference climatology to use.
+                Year defining the reference climatology.
             tol : float, optional
                 Number in (0, 1) which multiplies the difference between the
                 climatological 'ceiling' and 'floor' to calculate a threshold
                 above the climatological 'floor'. Months with a climatology
-                greater than the floor+threshold are considered 'in-season'.
+                greater than the threshold are considered 'in-season'.
+                Defaults to 0.5
             kern : list or ndarray, optional
                 Climatology smoothing kernel with odd number of elements.
                 Only non-zero elements specified - zero-padded as required.
+                Defaults to [1, 2, 1].
         """
 
         self.meta['seas_climyear'] = clim_year
         self.meta['seas_kern'] = kern
         self.meta['seas_tol'] = tol
 
-        clims = self.clims.loc[clim_year]
+        # Select reference climatology
+        clims_ref = self.clims.loc[clim_year]
 
         # Define function to do circular convolution for smoothing
         def cconv(X, kern, axis=0):
@@ -153,27 +156,26 @@ class Weather():
         # Smooth using centred circular convolution of monthly climatology
         kwts = np.atleast_1d(kern)/sum(kern)
         kernel = np.roll(np.pad(kwts, (0, 12-kwts.size)), -(kwts.size//2))
-        clims_smooth = pd.DataFrame(cconv(clims, kernel, axis=0),
-                                    index=clims.index, columns=clims.columns)
+        clims = pd.DataFrame(cconv(clims_ref, kernel, axis=0),
+                             index=clims_ref.index, columns=clims_ref.columns)
 
         # Make DataFrame of buffered monthly climatologies
         clims_wrap = np.vstack([clims.loc[12], clims, clims.loc[1]])
-        clims_smooth_wrap = np.vstack([clims_smooth.loc[12], clims_smooth, clims_smooth.loc[1]])
 
-        # Calculate extrema - smooth for maxima, not for minima
+        # Calculate extrema
         extrema = np.diff(np.sign(np.diff(clims_wrap, axis=0)), axis=0)
-        extrema_smooth = np.diff(np.sign(np.diff(clims_smooth_wrap, axis=0)), axis=0)
-        maxima, minima = np.where(extrema_smooth<0, 1, 0), np.where(extrema>0, 1, 0)
+        maxima, minima = np.where(extrema<0, 1, 0), np.where(extrema>0, 1, 0)
 
         # Calculate climatology threshold to identify in-season months
         ceil = pd.concat([clims.where(maxima > 0)]*3).interpolate()[12:24]
         floor = pd.concat([clims.where(minima > 0)]*3).interpolate()[12:24]
-        seas_filt = (ceil - floor)*tol + floor
-        seas_mask = clims > seas_filt
+        thresh = (ceil - floor)*tol + floor
         self.ceil = ceil
         self.floor = floor
+        self.thresh = thresh
 
-        # Label seasons
+        # Label seasons where climatology exceeds threshold
+        seas_mask = clims > thresh
         labels = (seas_mask.astype(int).diff()>0).astype(int).cumsum()
         nseas = labels.max(axis=0)
         self.seas = labels.where(labels>0, nseas, axis=1).where(seas_mask, 0)
