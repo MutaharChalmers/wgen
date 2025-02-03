@@ -373,7 +373,7 @@ class Weather():
         """
 
         # Load metadata
-        with open(os.path.join(inpath, desc, 'meta.json', 'r')) as f:
+        with open(os.path.join(inpath, desc, 'meta.json'), 'r') as f:
             self.meta = json.load(f)
 
         self.clims = pd.read_parquet(os.path.join(inpath, desc, 'clims.parquet'))
