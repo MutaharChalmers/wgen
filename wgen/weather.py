@@ -450,8 +450,7 @@ class Model():
         weatherPCs = {regvar: pd.read_parquet(os.path.join(inpath, regvar, 'PCs.parquet'))
                       for regvar in regvars}
         self.weatherPCs = pd.concat(weatherPCs, axis=1, names=['regvar','pc'])
-        self.meta['weatherPCs'] = [pd.read_parquet(os.path.join(inpath, regvar))
-                                   for regvar in regvars}]
+        self.meta['weatherPCs'] = [os.path.join(inpath, regvar) for regvar in regvars]
 
     def load_tele_PCs(self, inpath, desc):
         """Load historic pre-processed SST PC data from disk.
