@@ -450,6 +450,8 @@ class Model():
         weatherPCs = {regvar: pd.read_parquet(os.path.join(inpath, regvar, 'PCs.parquet'))
                       for regvar in regvars}
         self.weatherPCs = pd.concat(weatherPCs, axis=1, names=['regvar','pc'])
+        self.meta['weatherPCs'] = [pd.read_parquet(os.path.join(inpath, regvar))
+                                   for regvar in regvars}]
 
     def load_tele_PCs(self, inpath, desc):
         """Load historic pre-processed SST PC data from disk.
@@ -464,6 +466,7 @@ class Model():
 
         # Load teleconnection SST PCs
         self.telePCs = pd.read_parquet(os.path.join(inpath, desc, 'PCs.parquet'))
+        self.meta['telePCs'] = os.path.join(inpath, desc)
 
     def load_fore_PCs(self, inpath, desc, fyear, fmonth):
         """Load forecast pre-processed SST PC data from disk.
@@ -492,6 +495,7 @@ class Model():
                               for i in range(N_ens)}, names=['number'])
 
         self.forePCs = pd.concat([forePCs0, forePCs]).sort_index()
+        self.meta['forePCs'] = os.path.join(inpath, desc, fname)
 
 
     def make_forcing(self, N_batches, year_range=(None, None), forecast=False):
@@ -624,6 +628,8 @@ class Model():
                 weatherPCs = pd.concat({c: self.whiten(weatherPCs[c]) for c in cols},
                                        names=['regvar'], axis=1)
 
+        self.meta['bias_correct_weatherPCs'] = bias_correct
+        self.meta['whiten_weatherPCs'] = whiten
         return weatherPCs.reorder_levels(multiPCs.index.names).sort_index()
 
     def make_depn(self, p_thresh=0.05, max_feats=3, topM=None):
@@ -755,6 +761,10 @@ class Model():
         periods = self.multiPCs.reindex(ix).index.get_level_values('month').to_numpy()
         self.model.fit(Xn=self.multiPCs.reindex(ix).values, depn=depn,
                        Xx=self.telePCs.reindex(ix).values, depx=depx, periods=periods)
+        self.meta['p_thresh_n'] = p_thresh_n
+        self.meta['max_feats_n'] = max_feats_n
+        self.meta['p_thresh_x'] = p_thresh_x
+        self.meta['max_feats_x'] = max_feats_x
 
     def whiten(self, PCs):
         """Decorrelate data.
@@ -895,6 +905,11 @@ class Model():
             if whiten:
                 stoc = self.whiten(stoc)
 
+        self.meta['seed'] = seed
+        self.meta['N_batches'] = len(batches)
+        self.meta['year_range'] = (years.min(), years.max())
+        self.meta['bias_correct_sim'] = bias_correct
+        self.meta['whiten_sim'] = whiten
         return stoc.sort_index()
 
     def to_file(self, outpath, desc):
