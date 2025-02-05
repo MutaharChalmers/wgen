@@ -207,13 +207,13 @@ class Weather():
 
         Parameters
         ----------
-            wts : Series, optional
-                Weights to apply to anomalies with consistent index.
+            wts : DataFrame, optional
+                Cell-month weights to apply to anomalies with consistent index.
         """
 
         # Calculate weights
         if wts is None:
-            self.wts = 1
+            self.wts = pd.DataFrame(1, index=self.Z.index, columns=self.Z.columns)
 
         # Keep one less EOFs/PCs than the number of unique years
         n = self.Z.index.unique(level='year').size - 1
@@ -222,7 +222,7 @@ class Weather():
         EOFs, PCs = {}, {}
 
         for m in tqdm(range(1, 13), disable=self.tqdm):
-            X = self.Z.xs(m, level='month') * self.wts
+            X = self.Z.xs(m, level='month') * self.wts.xs(m, level='month')
             _, _, V = np.linalg.svd(X, full_matrices=False)
             EOFs[m] = pd.DataFrame(V[:n,:], columns=X.columns)
             PCs[m] = X @ EOFs[m].T
