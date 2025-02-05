@@ -72,7 +72,7 @@ class Weather():
         self.anoms = (data - self.clims).dropna()
 
     def standardise(self, data, method='silverman', bws_dict=None, N_KDE=100,
-                    buffer_bws=5, min_bw=1e-18, seed=42, noise_sig=1e-18):
+                    buffer_bws=5, min_bw=1e-18):
         """Fit 1D KDEs to input data by cell-month and transform to standard
         normally distributed.
 
@@ -94,11 +94,6 @@ class Weather():
             Number of bandwidths beyond data limits to extend evaluation grid.
         min_bw : float, optional
             Minimum KDE bandwidth. Defaults to 1e-18.
-        seed : int, optional
-            Seed or random number generator state. Used to generate low
-            amplitude Gaussian noise to add to cell-months with zero variance.
-        noise_sig : float, optional
-            Standard deviation of noise added to zero-variance variables.
         """
 
         # Update metadata dict
@@ -106,28 +101,21 @@ class Weather():
         self.meta['std_N_KDE'] = N_KDE
         self.meta['std_buffer_bws'] = buffer_bws
         self.meta['std_min_bw'] = min_bw
-        self.meta['std_seed'] = seed
-        self.meta['std_noise_sig'] = noise_sig
 
         self.ecdf = kt.kdecdf(N=N_KDE, buffer_bws=buffer_bws, method=method)
-        self.rng = np.random.RandomState(seed)
         self.grids, self.cdfs = {}, {}
-
-        # If any cell-months have insufficient variance, add Gaussian noise
-        stdevs = data.groupby(level='month').std()
-        noise = self.rng.normal(scale=noise_sig, size=data.shape)
-        data = data.where(stdevs>=noise_sig, noise)
 
         # Fit and transform anomalies to standard normal distributions
         Z = []
         for m, data_m in data.groupby(level='month'):
+            cols_m = data_m.columns[data_m.std()>0]
             if method.lower() in ['silverman','scott','cv']:
-                self.ecdf.fit(data_m, min_bw=min_bw)
+                self.ecdf.fit(data_m[cols_m], min_bw=min_bw)
             else:
-                self.ecdf.fit(data_m, bws=bws_dict[m], min_bw=min_bw)
+                self.ecdf.fit(data_m[cols_m], bws=bws_dict[m], min_bw=min_bw)
 
-            Z.append(pd.DataFrame(st.norm.ppf(self.ecdf.transform(data_m)),
-                                  index=data_m.index, columns=data_m.columns))
+            Z.append(pd.DataFrame(st.norm.ppf(self.ecdf.transform(data_m[cols_m])),
+                                  index=data_m.index, columns=cols_m))
             self.grids[m] = self.ecdf.grids
             self.cdfs[m] = self.ecdf.cdfs
         Z = pd.concat(Z).sort_index()
