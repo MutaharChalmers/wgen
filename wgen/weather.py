@@ -136,6 +136,11 @@ class Weather():
         self.Zmean = Z.groupby(level='month').mean()
         self.Z = Z - self.Zmean
 
+        # Estimate Z-scores' normality by month using Shapiro-Wilk test p-values
+        swpvals = {(m, i): st.shapiro(self.Z.xs(m, level='month')[i]).pvalue
+                   for m in tqdm(range(1,13)) for i in self.Z.columns}
+        self.swpvals_Z = pd.Series(swpvals).rename_axis(['month','geoid']).unstack('month')
+
     def clims_to_seasons(self, clim_year, tol=0.5, kern=[1,2,1]):
         """Identify seasons using changes in monthly climatology.
 
@@ -229,7 +234,7 @@ class Weather():
         # Estimate PCs' normality by month using Shapiro-Wilk test p-values
         swpvals = {(m, pc): st.shapiro(self.PCs.xs(m, level='month')[pc]).pvalue
                    for m in tqdm(range(1,13)) for pc in self.PCs.columns}
-        self.swpvals = pd.Series(swpvals).rename_axis(['month','pc']).unstack('month')
+        self.swpvals_PCs = pd.Series(swpvals).rename_axis(['month','pc']).unstack('month')
 
 
     def PCs_to_anoms(self, PCs, outpath=None, regvar=None, verbose=False):
@@ -353,10 +358,12 @@ class Weather():
 
         self.clims.to_parquet(os.path.join(outpath, desc, 'clims.parquet'))
         self.Zmean.to_parquet(os.path.join(outpath, desc, 'Zmean.parquet'))
+        self.Z.to_parquet(os.path.join(outpath, desc, 'Z.parquet'))
+        self.swpvals_Z.to_parquet(os.path.join(outpath, desc, 'swpvals_Z.parquet'))
         self.EOFs.to_parquet(os.path.join(outpath, desc, 'EOFs.parquet'))
         self.PCs.to_parquet(os.path.join(outpath, desc, 'PCs.parquet'))
-        self.swpvals.to_parquet(os.path.join(outpath, desc, 'swpvals.parquet'))
-        self.Z.to_parquet(os.path.join(outpath, desc, 'Z.parquet'))
+        self.swpvals_PCs.to_parquet(os.path.join(outpath, desc, 'swpvals_PCs.parquet'))
+
         for m in range(1, 13, 1):
             grids = pd.DataFrame(self.grids[m], columns=self.clims.columns)
             cdfs = pd.DataFrame(self.cdfs[m], columns=self.clims.columns)
@@ -385,10 +392,12 @@ class Weather():
 
         self.clims = pd.read_parquet(os.path.join(inpath, desc, 'clims.parquet'))
         self.Zmean = pd.read_parquet(os.path.join(inpath, desc, 'Zmean.parquet'))
+        self.Z = pd.read_parquet(os.path.join(inpath, desc, 'Z.parquet'))
+        self.swpvals_Zs = pd.read_parquet(os.path.join(inpath, desc, 'swpvals_Z.parquet'))
         self.EOFs = pd.read_parquet(os.path.join(inpath, desc, 'EOFs.parquet'))
         self.PCs = pd.read_parquet(os.path.join(inpath, desc, 'PCs.parquet'))
-        self.swpvals = pd.read_parquet(os.path.join(inpath, desc, 'swpvals.parquet'))
-        self.Z = pd.read_parquet(os.path.join(inpath, desc, 'Z.parquet'))
+        self.swpvals_PCs = pd.read_parquet(os.path.join(inpath, desc, 'swpvals_PCs.parquet'))
+
         for m in range(1, 13, 1):
             ecdf_m = pd.read_parquet(os.path.join(inpath, desc, f'ecdf_{m:02}.parquet'))
             self.grids[m] = ecdf_m.loc['grids'].to_numpy()
