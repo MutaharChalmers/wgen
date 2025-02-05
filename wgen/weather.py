@@ -16,7 +16,7 @@ import scskde as sk
 
 
 class Weather():
-    def __init__(self, standardise=True, N_KDE=100, buffer_bws=5, seed=42, tqdm=False):
+    def __init__(self, tqdm=False):
         """Process weather data for a single region-variable.
 
         Weather data must have been pre-processed into a standard DataFrame
@@ -24,43 +24,21 @@ class Weather():
 
         Parameters
         ----------
-        standardise : bool, optional
-            Standardise input data prior to PCA or not. Defaults to True.
-        N_KDE : int, optional
-            Number of points used to discretise the KDE.
-        buffer_bws : int, optional
-            Number of bandwidths beyond data limits to extend evaluation
-            range over, to handle extrapolation.
-        seed : int, optional
-            Seed or random number generator state variable. Used only to
-            generate very low amplitude Gaussian noise to add to cell-months
-            with zero variance, in order to make standardisation work.
         tqdm : bool, optional
             Show tqdm progress bars. Defaults to False.
         """
 
-        self.standardise = standardise
-        if standardise:
-            self.ecdf = kt.kdecdf(N=N_KDE, buffer_bws=buffer_bws)
-            self.rng = np.random.RandomState(seed)
-            self.grids = {}
-            self.cdfs = {}
-
         self.now = datetime.datetime.now()
-        self.meta = {'standardise': standardise, 'N_KDE': N_KDE,
-                     'buffer_bws': buffer_bws, 'seed': seed,
-                     'timestamp': self.now.strftime('%Y-%m-%d %H:%M:%S')}
-
+        self.meta = {'timestamp': self.now.strftime('%Y-%m-%d %H:%M:%S')}
         self.tqdm = not tqdm
 
-    def calc_anoms(self, data, year_range, clims, min_bw=1e-18, noise_sig=1e-18):
+    def calc_anoms(self, data, year_range, clims):
         """Calculate anomalies from weather data for a single region-variable.
 
-        Data is first detrended by removing a rolling N-year climatology;
-        N=30 years centred moving every 5 years is the NOAA standard. If
-        specified, it is converted to standardised anomalies by fitting a KDE
-        to each cell-month. Assumes that weather data is passed as a DataFrame
-        with columns being unique cellIDs and a row index of (year, month).
+        Removing a rolling N-year climatology from the data; N=30 years centred
+        moving every 5 years is the NOAA standard. Assumes that weather data is
+        passed as a DataFrame with columns being unique cellIDs and a row index
+        of (year, month).
 
         Parameters
         ----------
@@ -71,16 +49,14 @@ class Weather():
         clims : DataFrame
             DataFrame indexed by year with year_from and year_to columns,
             for calculating the climatologies for each year.
-        min_bw : float, optional
-            Minimum KDE bandwidth. Defaults to 1e-18.
-        noise_sig : float, optional
-            Standard deviation of Gaussian noise to be added to low-variance
-            variables.
         """
 
         if year_range[1] > self.now.year:
             print(f'year range {year_range} cannot include the future')
             return None
+
+        # Update metadata dict
+        self.meta['anoms_clims'] = clims.to_dict('index')
 
         # Define the climate periods used to calculate the anomalies
         clims_map = clims.reset_index()
@@ -95,25 +71,66 @@ class Weather():
         # Calculate 'anomalies' - deviations from local climatology
         self.anoms = (data - self.clims).dropna()
 
-        # Fit 1D KDEs to each cell-month's anomalies and standardise
-        if self.standardise:
-            # If any cell-months have insufficient variance, add Gaussian noise
-            stdevs = self.anoms.groupby(level='month').std()
-            noise = self.rng.normal(scale=noise_sig, size=self.anoms.shape)
-            self.anoms = self.anoms.where(stdevs>=noise_sig, noise)
+    def standardise(self, data, method='silverman', bws_dict=None, N_KDE=100,
+                    buffer_bws=5, min_bw=1e-18, seed=42, noise_sig=1e-18):
+        """Fit 1D KDEs to input data by cell-month and transform to standard
+        normally distributed.
 
-            # Fit and transform anomalies to standard normal distributions
-            Z = []
-            for m, anoms_m in self.anoms.groupby(level='month'):
-                self.ecdf.fit(anoms_m, min_bw=min_bw)
+        Parameters
+        ----------
+        data : DataFrame
+            DataFrame with (year, month) MultiIndex, and cellIDs as columns.
+        method : str, optional
+            Method to use for KDE standardisation transformation. Defaults to
+            'silverman', other options include 'scott', 'cv' and 'precomputed'.
+            If 'precomputed' is specified, a dict of bandwidth arrays by month
+            must be passed to the fit() function.
+        bws_dict : dict, optional
+            Dictionary of numpy arrays of KDE bandwidths. Only needed if the
+            'precomputed' method is used.
+        N_KDE : int, optional
+            Number of points used to discretise the KDE.
+        buffer_bws : int, optional
+            Number of bandwidths beyond data limits to extend evaluation grid.
+        min_bw : float, optional
+            Minimum KDE bandwidth. Defaults to 1e-18.
+        seed : int, optional
+            Seed or random number generator state. Used to generate low
+            amplitude Gaussian noise to add to cell-months with zero variance.
+        noise_sig : float, optional
+            Standard deviation of noise added to zero-variance variables.
+        """
 
-                Z.append(pd.DataFrame(st.norm.ppf(self.ecdf.transform(anoms_m)),
-                                      index=anoms_m.index, columns=anoms_m.columns))
-                self.grids[m] = self.ecdf.grids
-                self.cdfs[m] = self.ecdf.cdfs
-            Z = pd.concat(Z).sort_index()
-        else:
-            Z = self.anoms
+        # Update metadata dict
+        self.meta['std_method'] = method
+        self.meta['std_N_KDE'] = N_KDE
+        self.meta['std_buffer_bws'] = buffer_bws
+        self.meta['std_min_bw'] = min_bw
+        self.meta['std_seed'] = seed
+        self.meta['std_noise_sig'] = noise_sig
+
+        self.ecdf = kt.kdecdf(N=N_KDE, buffer_bws=buffer_bws, method=method)
+        self.rng = np.random.RandomState(seed)
+        self.grids, self.cdfs = {}, {}
+
+        # If any cell-months have insufficient variance, add Gaussian noise
+        stdevs = data.groupby(level='month').std()
+        noise = self.rng.normal(scale=noise_sig, size=data.shape)
+        data = data.where(stdevs>=noise_sig, noise)
+
+        # Fit and transform anomalies to standard normal distributions
+        Z = []
+        for m, data_m in data.groupby(level='month'):
+            if method.lower() in ['silverman','scott','cv']:
+                self.ecdf.fit(data_m, min_bw=min_bw)
+            else:
+                self.ecdf.fit(data_m, bws=bws_dict[m], min_bw=min_bw)
+
+            Z.append(pd.DataFrame(st.norm.ppf(self.ecdf.transform(data_m)),
+                                  index=data_m.index, columns=data_m.columns))
+            self.grids[m] = self.ecdf.grids
+            self.cdfs[m] = self.ecdf.cdfs
+        Z = pd.concat(Z).sort_index()
 
         # Zero-mean data by month to prepare for PCA
         self.Zmean = Z.groupby(level='month').mean()
@@ -288,38 +305,31 @@ class Weather():
         else:
             clims = self.clims.loc[clim_year]
 
-        if self.standardise:
-            ecdf = kt.kdecdf()
+        # Manually override grids and cdfs to do inverse transform
+        ecdf = kt.kdecdf()
 
-            # If Z is a dict, it's a stochastic batch run
-            if isinstance(Z, dict):
-                data = {}
-                for b, Zb in Z.items():
-                    data_m = []
-                    for m, Zm in Zb.groupby(level='month'):
-                        ecdf.grids = self.grids[m]
-                        ecdf.cdfs = self.cdfs[m]
-                        anoms_m = ecdf.inverse(ss.ndtr(Zm+self.Zmean.loc[m]))
-                        data_m.append(pd.DataFrame(anoms_m, index=Zm.index,
-                                                   columns=Zm.columns))
-                    data[b] = (pd.concat(data_m).sort_index() + clims).dropna()
-            else:
+        # If Z is a dict, it's a stochastic batch run
+        if isinstance(Z, dict):
+            data = {}
+            for b, Zb in Z.items():
                 data_m = []
-                for m, Zm in Z.groupby(level='month'):
+                for m, Zm in Zb.groupby(level='month'):
                     ecdf.grids = self.grids[m]
                     ecdf.cdfs = self.cdfs[m]
                     anoms_m = ecdf.inverse(ss.ndtr(Zm+self.Zmean.loc[m]))
                     data_m.append(pd.DataFrame(anoms_m, index=Zm.index,
-                                               columns=Zm.columns))
-                data = (pd.concat(data_m).sort_index() + clims).dropna()
-            return data
+                                                columns=Zm.columns))
+                data[b] = (pd.concat(data_m).sort_index() + clims).dropna()
         else:
-            # If Z is a dict, it's a stochastic batch run
-            if isinstance(Z, dict):
-                return {b: (Zb + self.Zmean + clims).dropna()
-                        for b, Zb in Z.items()}
-            else:
-                return (Z + self.Zmean + clims).dropna()
+            data_m = []
+            for m, Zm in Z.groupby(level='month'):
+                ecdf.grids = self.grids[m]
+                ecdf.cdfs = self.cdfs[m]
+                anoms_m = ecdf.inverse(ss.ndtr(Zm+self.Zmean.loc[m]))
+                data_m.append(pd.DataFrame(anoms_m, index=Zm.index,
+                                            columns=Zm.columns))
+            data = (pd.concat(data_m).sort_index() + clims).dropna()
+        return data
 
     def to_file(self, outpath, desc):
         """Save model to disk.
@@ -347,19 +357,16 @@ class Weather():
         self.PCs.to_parquet(os.path.join(outpath, desc, 'PCs.parquet'))
         self.swpvals.to_parquet(os.path.join(outpath, desc, 'swpvals.parquet'))
         self.Z.to_parquet(os.path.join(outpath, desc, 'Z.parquet'))
+        for m in range(1, 13, 1):
+            grids = pd.DataFrame(self.grids[m], columns=self.clims.columns)
+            cdfs = pd.DataFrame(self.cdfs[m], columns=self.clims.columns)
+            ecdf_m = pd.concat({'grids': grids, 'cdfs': cdfs})
+            ecdf_m.to_parquet(os.path.join(outpath, desc, f'ecdf_{m:02}.parquet'))
+
         try:
             self.seas.to_parquet(os.path.join(outpath, desc, 'seas.parquet'))
         except:
             print('No seasons identified, so not saved to file')
-
-
-        if self.standardise:
-            # Manually create format required by kdetools
-            for m in range(1, 13, 1):
-                grids = pd.DataFrame(self.grids[m], columns=self.clims.columns)
-                cdfs = pd.DataFrame(self.cdfs[m], columns=self.clims.columns)
-                ecdf_m = pd.concat({'grids': grids, 'cdfs': cdfs})
-                ecdf_m.to_parquet(os.path.join(outpath, desc, f'ecdf_{m:02}.parquet'))
 
     def from_file(self, inpath, desc):
         """Load model from disk.
@@ -382,23 +389,15 @@ class Weather():
         self.PCs = pd.read_parquet(os.path.join(inpath, desc, 'PCs.parquet'))
         self.swpvals = pd.read_parquet(os.path.join(inpath, desc, 'swpvals.parquet'))
         self.Z = pd.read_parquet(os.path.join(inpath, desc, 'Z.parquet'))
+        for m in range(1, 13, 1):
+            ecdf_m = pd.read_parquet(os.path.join(inpath, desc, f'ecdf_{m:02}.parquet'))
+            self.grids[m] = ecdf_m.loc['grids'].to_numpy()
+            self.cdfs[m] = ecdf_m.loc['cdfs'].to_numpy()
+
         try:
             self.seas = pd.read_parquet(os.path.join(inpath, desc, 'seas.parquet'))
         except:
             print('No seasons identified and saved to file')
-
-        self.standardise = self.meta['standardise']
-        self.rng = np.random.RandomState(int(self.meta['seed']))
-
-        if self.standardise:
-            self.ecdf = kt.kdecdf(N=int(self.meta['N_KDE']),
-                                  buffer_bws=int(self.meta['buffer_bws']))
-
-            # Manually create format required by kdetools
-            for m in range(1, 13, 1):
-                ecdf_m = pd.read_parquet(os.path.join(inpath, desc, f'ecdf_{m:02}.parquet'))
-                self.grids[m] = ecdf_m.loc['grids'].to_numpy()
-                self.cdfs[m] = ecdf_m.loc['cdfs'].to_numpy()
 
 
 class Model():
