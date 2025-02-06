@@ -219,6 +219,8 @@ class Weather():
         # Calculate weights
         if wts is None:
             self.wts = pd.DataFrame(1, index=self.Z.index, columns=self.Z.columns)
+        else:
+            self.wts = wts
 
         # Keep one less EOFs/PCs than the number of unique years
         n = self.Z.index.unique(level='year').size - 1
@@ -226,8 +228,9 @@ class Weather():
         # Calculate EOFs and PCs for each month
         EOFs, PCs = {}, {}
 
+        Z = self.Z * self.wts
         for m in tqdm(range(1, 13), disable=self.tqdm):
-            X = self.Z.xs(m, level='month') * self.wts.xs(m, level='month')
+            X = Z.xs(m, level='month')
             _, _, V = np.linalg.svd(X, full_matrices=False)
             EOFs[m] = pd.DataFrame(V[:n,:], columns=X.columns)
             PCs[m] = X @ EOFs[m].T
@@ -398,7 +401,7 @@ class Weather():
         self.clims = pd.read_parquet(os.path.join(inpath, desc, 'clims.parquet'))
         self.Zmean = pd.read_parquet(os.path.join(inpath, desc, 'Zmean.parquet'))
         self.Z = pd.read_parquet(os.path.join(inpath, desc, 'Z.parquet'))
-        self.swpvals_Zs = pd.read_parquet(os.path.join(inpath, desc, 'swpvals_Z.parquet'))
+        self.swpvals_Z = pd.read_parquet(os.path.join(inpath, desc, 'swpvals_Z.parquet'))
         self.EOFs = pd.read_parquet(os.path.join(inpath, desc, 'EOFs.parquet'))
         self.PCs = pd.read_parquet(os.path.join(inpath, desc, 'PCs.parquet'))
         self.swpvals_PCs = pd.read_parquet(os.path.join(inpath, desc, 'swpvals_PCs.parquet'))
