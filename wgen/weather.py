@@ -71,7 +71,7 @@ class Weather():
         # Calculate 'anomalies' - deviations from local climatology
         self.anoms = (data - self.clims).dropna()
 
-    def standardise(self, data, method='kde-silverman', bws_dict=None, N=100,
+    def standardise(self, data, method='silverman', bws_dict=None, N=100,
                     buffer_bws=5, hd_wt=None, min_bw=1e-9, min_std=1e-9):
         """Fit 1D KDEs to input data by cell-month and transform to standard
         normally distributed z-scores
@@ -82,13 +82,12 @@ class Weather():
             DataFrame with (year, month) MultiIndex, and cellIDs as columns.
         method : str, optional
             Method to use for standardisation transformation. Defaults to
-            'kde-silverman', other options include 'kde-scott', 'kde-mlecv',
-            and 'kde-precomputed'.
-            If 'kde-precomputed' is specified, a dict of bandwidth arrays by
+            'silverman', other options are 'scott', 'cv', and 'precomputed'.
+            If 'precomputed' is specified, a dict of bandwidth arrays by
             month must be passed to the fit() function.
         bws_dict : dict, optional
             Dictionary of numpy arrays of KDE bandwidths. Only needed if the
-            'kde-precomputed' method is used.
+            'precomputed' method is used.
         N : int, optional
             Number of points used to discretise the fitted CDF.
         buffer_bws : int, optional
@@ -120,9 +119,9 @@ class Weather():
         for m, data_m in data.groupby(level='month'):
             cols_m = data_m.columns[data_m.std()>min_std]
             X = data_m[cols_m]
-            if method.lower() in ['kde-silverman','kde-scott','kde-cv']:
+            if method.lower() in ['silverman','scott','cv']:
                 self.ecdf.fit(X, min_bw=min_bw)
-            else: # 'kde-precomputed'
+            else: # 'precomputed'
                 self.ecdf.fit(X, bws=bws_dict[m], min_bw=min_bw)
 
             # Override quantile estimates within-sample with Harrell-Davis
