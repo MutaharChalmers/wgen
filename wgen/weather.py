@@ -228,7 +228,7 @@ class Weather():
         # Calculate EOFs and PCs for each month
         EOFs, PCs = {}, {}
 
-        Z = self.Z * self.wts
+        Z = self.Z * self.wts[self.Z.columns]
         for m in tqdm(range(1, 13), disable=self.tqdm):
             X = Z.xs(m, level='month')
             _, _, V = np.linalg.svd(X, full_matrices=False)
