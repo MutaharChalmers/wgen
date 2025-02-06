@@ -126,7 +126,7 @@ class Weather():
 
             # Override quantile estimates within-sample with Harrell-Davis
             if hd_wt is not None:
-                hdqs = [st.mstats.hdquantiles(X[:,i], self.ecdf.cdfs[:-1,i])
+                hdqs = [st.mstats.hdquantiles(X.values[:,i], self.ecdf.cdfs[:-1,i])
                         for i in range(X.shape[1])]
                 hdqs = np.array(np.vstack(hdqs)).T
                 self.ecdf.grids[:-1,:] = hd_wt*hdqs + (1-hd_wt)*self.ecdf.grids[:-1,:]
