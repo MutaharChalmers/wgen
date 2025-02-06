@@ -375,8 +375,8 @@ class Weather():
         self.swpvals_PCs.to_parquet(os.path.join(outpath, desc, 'swpvals_PCs.parquet'))
 
         for m in range(1, 13, 1):
-            grids = pd.DataFrame(self.grids[m], columns=self.clims.columns)
-            cdfs = pd.DataFrame(self.cdfs[m], columns=self.clims.columns)
+            grids = pd.DataFrame(self.grids[m], columns=self.Z.columns)
+            cdfs = pd.DataFrame(self.cdfs[m], columns=self.Z.columns)
             ecdf_m = pd.concat({'grids': grids, 'cdfs': cdfs})
             ecdf_m.to_parquet(os.path.join(outpath, desc, f'ecdf_{m:02}.parquet'))
 
