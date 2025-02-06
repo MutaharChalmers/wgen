@@ -229,7 +229,7 @@ class Weather():
         EOFs, PCs = {}, {}
 
         Z = self.Z * self.wts[self.Z.columns]
-        for m in tqdm(range(1, 13), disable=self.tqdm):
+        for m in range(1, 13):
             X = Z.xs(m, level='month')
             _, _, V = np.linalg.svd(X, full_matrices=False)
             EOFs[m] = pd.DataFrame(V[:n,:], columns=X.columns)
@@ -281,6 +281,7 @@ class Weather():
                 Zgen = pd.concat([PC.dropna(axis=1) @ self.EOFs.loc[m]
                                   for m, PC in PCs_batch.groupby(level='month')]
                                   ).reorder_levels(PCs_batch.index.names).sort_index()
+                Zgen = (Zgen/self.wts).fillna(0)
                 if writeable:
                     fname = f'{regvar}_Zgen_batch{b:04}.parquet'
                     Zgen.to_parquet(os.path.join(outpath, fname))
@@ -289,6 +290,7 @@ class Weather():
             Zgen = pd.concat([PC.dropna(axis=1) @ self.EOFs.loc[m]
                               for m, PC in PCs.groupby(level='month')]
                               ).reorder_levels(PCs.index.names).sort_index()
+            Zgen = (Zgen/self.wts).fillna(0)
             if writeable:
                 fname = f'{regvar}_Zgen_.parquet'
                 Zgen.to_parquet(os.path.join(outpath, fname))
