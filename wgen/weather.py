@@ -71,50 +71,68 @@ class Weather():
         # Calculate 'anomalies' - deviations from local climatology
         self.anoms = (data - self.clims).dropna()
 
-    def standardise(self, data, method='silverman', bws_dict=None, N_KDE=100,
-                    buffer_bws=5, min_bw=1e-18):
+    def standardise(self, data, method='kde-silverman', bws_dict=None, N=100,
+                    buffer_bws=5, hd_wt=None, min_bw=1e-9, min_std=1e-9):
         """Fit 1D KDEs to input data by cell-month and transform to standard
-        normally distributed.
+        normally distributed z-scores
 
         Parameters
         ----------
         data : DataFrame
             DataFrame with (year, month) MultiIndex, and cellIDs as columns.
         method : str, optional
-            Method to use for KDE standardisation transformation. Defaults to
-            'silverman', other options include 'scott', 'cv' and 'precomputed'.
-            If 'precomputed' is specified, a dict of bandwidth arrays by month
-            must be passed to the fit() function.
+            Method to use for standardisation transformation. Defaults to
+            'kde-silverman', other options include 'kde-scott', 'kde-mlecv',
+            and 'kde-precomputed'.
+            If 'kde-precomputed' is specified, a dict of bandwidth arrays by
+            month must be passed to the fit() function.
         bws_dict : dict, optional
             Dictionary of numpy arrays of KDE bandwidths. Only needed if the
-            'precomputed' method is used.
-        N_KDE : int, optional
-            Number of points used to discretise the KDE.
+            'kde-precomputed' method is used.
+        N : int, optional
+            Number of points used to discretise the fitted CDF.
         buffer_bws : int, optional
             Number of bandwidths beyond data limits to extend evaluation grid.
+        hd_wt : float, optional
+            Weight to give Harrell-Davis quantile estimates when blending with
+            kernel quantile estimates. Defaults to None (no blending). Can
+            improve normalilty characteristics of transformed data if nonzero,
+            but reduces extrapolation into the tail.
         min_bw : float, optional
-            Minimum KDE bandwidth. Defaults to 1e-18.
+            Minimum KDE bandwidth. Defaults to 1e-9.
+        min_std : float, optional
+            Cells with standard deviation less than this are filtered out.
+            Defaults to 1e-9.
         """
 
         # Update metadata dict
         self.meta['std_method'] = method
-        self.meta['std_N_KDE'] = N_KDE
+        self.meta['std_N'] = N
         self.meta['std_buffer_bws'] = buffer_bws
+        self.meta['std_hd_wt'] = 0 if hd_wt is None else hd_wt
         self.meta['std_min_bw'] = min_bw
 
-        self.ecdf = kt.kdecdf(N=N_KDE, buffer_bws=buffer_bws, method=method)
+        self.ecdf = kt.kdecdf(N=N, buffer_bws=buffer_bws, method=method)
         self.grids, self.cdfs = {}, {}
 
         # Fit and transform anomalies to standard normal distributions
         Z = []
         for m, data_m in data.groupby(level='month'):
-            cols_m = data_m.columns[data_m.std()>0]
-            if method.lower() in ['silverman','scott','cv']:
-                self.ecdf.fit(data_m[cols_m], min_bw=min_bw)
-            else:
-                self.ecdf.fit(data_m[cols_m], bws=bws_dict[m], min_bw=min_bw)
+            cols_m = data_m.columns[data_m.std()>min_std]
+            X = data_m[cols_m]
+            if method.lower() in ['kde-silverman','kde-scott','kde-cv']:
+                self.ecdf.fit(X, min_bw=min_bw)
+            else: # 'kde-precomputed'
+                self.ecdf.fit(X, bws=bws_dict[m], min_bw=min_bw)
 
-            Z.append(pd.DataFrame(st.norm.ppf(self.ecdf.transform(data_m[cols_m])),
+            # Override quantile estimates within-sample with Harrell-Davis
+            if hd_wt is not None:
+                hdqs = [st.mstats.hdquantiles(X[:,i], self.ecdf.cdfs[:-1,i])
+                        for i in range(X.shape[1])]
+                hdqs = np.array(np.vstack(hdqs)).T
+                self.ecdf.grids[:-1,:] = hd_wt*hdqs + (1-hd_wt)*self.ecdf.grids[:-1,:]
+
+            Z.append(pd.DataFrame(st.norm.ppf(self.ecdf.transform(X)),
                                   index=data_m.index, columns=cols_m))
             self.grids[m] = self.ecdf.grids
             self.cdfs[m] = self.ecdf.cdfs
