@@ -116,7 +116,7 @@ class Weather():
 
         # Fit and transform anomalies to standard normal distributions
         Z = []
-        for m, data_m in data.groupby(level='month'):
+        for m, data_m in tqdm(data.groupby(level='month')):
             cols_m = data_m.columns[data_m.std()>min_std]
             X = data_m[cols_m]
             if method.lower() in ['silverman','scott','cv']:
@@ -143,7 +143,7 @@ class Weather():
 
         # Estimate Z-scores' normality by month using Shapiro-Wilk test p-values
         swpvals = {(m, i): st.shapiro(self.Z.xs(m, level='month')[i]).pvalue
-                   for m in tqdm(range(1,13)) for i in self.Z.columns}
+                   for m in range(1,13) for i in self.Z.columns}
         self.swpvals_Z = pd.Series(swpvals).rename_axis(['month','geoid']).unstack('month')
 
     def clims_to_seasons(self, clim_year, tol=0.5, kern=[1,2,1]):
@@ -243,7 +243,7 @@ class Weather():
 
         # Estimate PCs' normality by month using Shapiro-Wilk test p-values
         swpvals = {(m, pc): st.shapiro(self.PCs.xs(m, level='month')[pc]).pvalue
-                   for m in tqdm(range(1,13)) for pc in self.PCs.columns}
+                   for m in range(1,13) for pc in self.PCs.columns}
         self.swpvals_PCs = pd.Series(swpvals).rename_axis(['month','pc']).unstack('month')
 
 
