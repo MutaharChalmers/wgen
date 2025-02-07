@@ -201,11 +201,13 @@ class Weather():
         self.floor = floor
         self.thresh = thresh
 
-        # Label seasons where climatology exceeds threshold
-        seas_mask = clims > thresh
-        labels = (seas_mask.astype(int).diff()>0).astype(int).cumsum()
-        nseas = labels.max(axis=0)
-        self.seas = labels.where(labels>0, nseas, axis=1).where(seas_mask, 0)
+        # Label seasons (in order) where climatology exceeds threshold
+        mask = (clims > thresh).astype(int)
+        breaks = np.clip(np.diff(np.vstack([mask.loc[[12]], mask]), axis=0),
+                         0, np.inf).cumsum(axis=0)
+        self.seas = pd.DataFrame(np.where(breaks>0, breaks, breaks[-1]),
+                                 index=mask.index, columns=mask.columns
+                                 ).where(mask>0, 0).astype(int)
 
     def anoms_to_PCs(self, wts=None):
         """Calculate EOFs and PCs of monthly anomalies.
