@@ -64,7 +64,7 @@ class Weather():
 
         # Calculate climatologies from full input DataFrame
         clim_dict = {tuple(w): data.loc[slice(*w)].groupby(level='month').mean()
-                 for w in clims_unique.values}
+                     for w in clims_unique.values}
         self.clims = pd.concat({yft[0]: clim_dict[tuple(yft[1:])]
                                 for yft in clims_map.values}, names=['year'])
 
@@ -72,7 +72,8 @@ class Weather():
         self.anoms = (data - self.clims).dropna()
 
     def standardise(self, data, method='silverman', bws_dict=None, N=100,
-                    buffer_bws=5, hd_wt=None, min_bw=1e-9, min_std=1e-9):
+                    buffer_bws=5, hd_wt=None, min_bw=1e-9, min_std=1e-9,
+                    min_clim=-np.inf):
         """Fit 1D KDEs to input data by cell-month and transform to standard
         normally distributed z-scores
 
@@ -102,6 +103,9 @@ class Weather():
         min_std : float, optional
             Cells with standard deviation less than this are filtered out.
             Defaults to 1e-9.
+        min_clim : float, optional
+            Minimum climatology for which to calculate standardised anomalies.
+            This allows arid region-months to be excluded. Defaults to -inf.
         """
 
         # Update metadata dict
@@ -110,6 +114,8 @@ class Weather():
         self.meta['std_buffer_bws'] = buffer_bws
         self.meta['std_hd_wt'] = 0 if hd_wt is None else hd_wt
         self.meta['std_min_bw'] = min_bw
+        self.meta['std_min_std'] = min_std
+        self.meta['std_min_clim'] = min_clim
 
         self.ecdf = kt.kdecdf(N=N, buffer_bws=buffer_bws, method=method)
         self.grids, self.cdfs = {}, {}
@@ -117,7 +123,9 @@ class Weather():
         # Fit and transform anomalies to standard normal distributions
         Z = []
         for m, data_m in tqdm(data.groupby(level='month')):
-            cols_m = data_m.columns[data_m.std()>min_std]
+            minstd_colmask = (data_m.std()>min_std)
+            minclim_colmask = (self.clims.xs(m, level='month')>min_clim).any()
+            cols_m = data_m.columns[minstd_colmask&minclim_colmask]
             X = data_m[cols_m]
             if method.lower() in ['silverman','scott','cv']:
                 self.ecdf.fit(X, min_bw=min_bw)
