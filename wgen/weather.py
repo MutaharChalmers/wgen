@@ -240,7 +240,7 @@ class Weather():
 
         Z = self.Z * self.wts[self.Z.columns]
         for m in range(1, 13):
-            X = Z.xs(m, level='month')
+            X = Z.xs(m, level='month').dropna(axis=1)
             _, _, V = np.linalg.svd(X, full_matrices=False)
             EOFs[m] = pd.DataFrame(V[:n,:], columns=X.columns)
             PCs[m] = X @ EOFs[m].T
