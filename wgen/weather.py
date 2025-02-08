@@ -122,7 +122,7 @@ class Weather():
 
         # Fit and transform anomalies to standard normal distributions
         Z = []
-        for m, data_m in tqdm(data.groupby(level='month')):
+        for m, data_m in tqdm(data.groupby(level='month'), disable=self.tqdm):
             minstd_colmask = (data_m.std()>min_std)
             minclim_colmask = (self.clims.xs(m, level='month')>min_clim).any()
             cols_m = data_m.columns[minstd_colmask&minclim_colmask]
