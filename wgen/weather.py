@@ -229,8 +229,10 @@ class Weather():
         # Calculate weights
         if wts is None:
             self.wts = pd.DataFrame(1, index=self.Z.index, columns=self.Z.columns)
+            self.meta['pca_wts'] = 'unweighted'
         else:
             self.wts = wts
+            self.meta['pca_wts'] = 'weighted'
 
         # Keep one less EOFs/PCs than the number of unique years
         n = self.Z.index.unique(level='year').size - 1
@@ -383,6 +385,8 @@ class Weather():
         self.EOFs.to_parquet(os.path.join(outpath, desc, 'EOFs.parquet'))
         self.PCs.to_parquet(os.path.join(outpath, desc, 'PCs.parquet'))
         self.swpvals_PCs.to_parquet(os.path.join(outpath, desc, 'swpvals_PCs.parquet'))
+        if self.meta['pca_wts'] == 'weighted':
+            self.wts.to_parquet(os.path.join(outpath, desc, 'PCA_wts.parquet'))
 
         for m in range(1, 13):
             cols = self.Z.xs(m, level='month').dropna(axis=1).columns
@@ -418,6 +422,8 @@ class Weather():
         self.EOFs = pd.read_parquet(os.path.join(inpath, desc, 'EOFs.parquet'))
         self.PCs = pd.read_parquet(os.path.join(inpath, desc, 'PCs.parquet'))
         self.swpvals_PCs = pd.read_parquet(os.path.join(inpath, desc, 'swpvals_PCs.parquet'))
+        if self.meta['pca_wts'] == 'weighted':
+            self.wts = pd.read_parquet(os.path.join(inpath, desc, 'PCA_wts.parquet'))
 
         for m in range(1, 13, 1):
             ecdf_m = pd.read_parquet(os.path.join(inpath, desc, f'ecdf_{m:02}.parquet'))
