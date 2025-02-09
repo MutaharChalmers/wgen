@@ -425,6 +425,10 @@ class Weather():
         if self.meta['pca_wts'] == 'weighted':
             self.wts = pd.read_parquet(os.path.join(inpath, desc, 'PCA_wts.parquet'))
 
+        self.ecdf = kt.kdecdf(N=N, buffer_bws=self.meta['std_buffer_bws'],
+                              method=self.meta['std_method'])
+        self.grids, self.cdfs = {}, {}
+
         for m in range(1, 13, 1):
             ecdf_m = pd.read_parquet(os.path.join(inpath, desc, f'ecdf_{m:02}.parquet'))
             self.grids[m] = ecdf_m.loc['grids'].to_numpy()
