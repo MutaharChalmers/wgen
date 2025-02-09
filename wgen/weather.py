@@ -425,7 +425,7 @@ class Weather():
         if self.meta['pca_wts'] == 'weighted':
             self.wts = pd.read_parquet(os.path.join(inpath, desc, 'PCA_wts.parquet'))
 
-        self.ecdf = kt.kdecdf(N=self.meta['N'], buffer_bws=self.meta['std_buffer_bws'],
+        self.ecdf = kt.kdecdf(N=self.meta['std_N'], buffer_bws=self.meta['std_buffer_bws'],
                               method=self.meta['std_method'])
         self.grids, self.cdfs = {}, {}
 
