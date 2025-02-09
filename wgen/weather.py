@@ -200,6 +200,7 @@ class Weather():
         # Calculate extrema
         extrema = np.diff(np.sign(np.diff(clims_wrap, axis=0)), axis=0)
         maxima, minima = np.where(extrema<0, 1, 0), np.where(extrema>0, 1, 0)
+        self.maxima, self.minima = maxima, minima
 
         # Calculate climatology threshold to identify in-season months
         ceil = pd.concat([clims.where(maxima > 0)]*3).interpolate()[12:24]
