@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import os
+import s3fs
 import json
 import datetime
 import numpy as np
@@ -186,7 +187,7 @@ class Weather():
         # Define function to do circular convolution for smoothing
         def cconv(X, kern, axis=0):
             return np.fft.irfft((np.fft.rfft(X, axis=axis).T *
-                                    np.fft.rfft(kern)).T, axis=axis)
+                                 np.fft.rfft(kern)).T, axis=axis)
 
         # Smooth using centred circular convolution of monthly climatology
         kwts = np.atleast_1d(kern)/sum(kern)
@@ -376,8 +377,13 @@ class Weather():
             os.makedirs(os.path.join(outpath, desc))
 
         # Save metadata
-        with open(os.path.join(outpath, desc, 'meta.json'), 'w') as f:
-            json.dump(self.meta, f, sort_keys=True, indent=4)
+        if outpath[:2] == 's3:':
+            s3 = s3fs.S3FileSystem()
+            with s3.open(os.path.join(outpath, desc, 'meta.json'), 'w') as f:
+                json.dump(self.meta, f, sort_keys=True, indent=4)
+        else:
+            with open(os.path.join(outpath, desc, 'meta.json'), 'w') as f:
+                json.dump(self.meta, f, sort_keys=True, indent=4)
 
         self.clims.to_parquet(os.path.join(outpath, desc, 'clims.parquet'))
         self.Zmean.to_parquet(os.path.join(outpath, desc, 'Zmean.parquet'))
@@ -413,8 +419,13 @@ class Weather():
         """
 
         # Load metadata
-        with open(os.path.join(inpath, desc, 'meta.json'), 'r') as f:
-            self.meta = json.load(f)
+        if inpath[:2] == 's3:':
+            s3 = s3fs.S3FileSystem()
+            with s3.open(os.path.join(inpath, desc, 'meta.json'), 'r') as f:
+                self.meta = json.load(f)
+        else:
+            with open(os.path.join(inpath, desc, 'meta.json'), 'r') as f:
+                self.meta = json.load(f)
 
         self.clims = pd.read_parquet(os.path.join(inpath, desc, 'clims.parquet'))
         self.Zmean = pd.read_parquet(os.path.join(inpath, desc, 'Zmean.parquet'))
