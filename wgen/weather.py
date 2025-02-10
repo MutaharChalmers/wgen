@@ -390,7 +390,7 @@ class Weather():
             self.wts.to_parquet(os.path.join(outpath, desc, 'PCA_wts.parquet'))
 
         for m in range(1, 13):
-            cols = self.Z.xs(m, level='month').dropna(axis=1).columns
+            cols = self.Z.xs(m, level='month').dropna(axis=1, how='all').columns
             grids = pd.DataFrame(self.grids[m], columns=cols)
             cdfs = pd.DataFrame(self.cdfs[m], columns=cols)
             ecdf_m = pd.concat({'grids': grids, 'cdfs': cdfs})
