@@ -377,7 +377,7 @@ class Weather():
             os.makedirs(os.path.join(outpath, desc))
 
         # Save metadata
-        if outpath[:2] == 's3:':
+        if outpath[:3] == 's3:':
             s3 = s3fs.S3FileSystem()
             with s3.open(os.path.join(outpath, desc, 'meta.json'), 'w') as f:
                 json.dump(self.meta, f, sort_keys=True, indent=4)
@@ -419,7 +419,7 @@ class Weather():
         """
 
         # Load metadata
-        if inpath[:2] == 's3:':
+        if inpath[:3] == 's3:':
             s3 = s3fs.S3FileSystem()
             with s3.open(os.path.join(inpath, desc, 'meta.json'), 'r') as f:
                 self.meta = json.load(f)
