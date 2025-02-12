@@ -436,6 +436,8 @@ class Weather():
         self.swpvals_PCs = pd.read_parquet(os.path.join(inpath, desc, 'swpvals_PCs.parquet'))
         if self.meta['pca_wts'] == 'weighted':
             self.wts = pd.read_parquet(os.path.join(inpath, desc, 'PCA_wts.parquet'))
+        else:
+            self.wts = pd.DataFrame(1, index=self.Z.index, columns=self.Z.columns)
 
         self.ecdf = kt.kdecdf(N=self.meta['std_N'], buffer_bws=self.meta['std_buffer_bws'],
                               method=self.meta['std_method'])
