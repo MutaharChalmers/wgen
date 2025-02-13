@@ -230,7 +230,8 @@ class Weather():
 
         # Calculate weights
         if wts is None:
-            self.wts = pd.DataFrame(1, index=self.Z.index, columns=self.Z.columns)
+            self.wts = pd.DataFrame(1, index=pd.Index(range(1,13), name='month'),
+                                    columns=self.Z.columns)
             self.meta['pca_wts'] = 'unweighted'
         else:
             self.wts = wts
@@ -437,7 +438,8 @@ class Weather():
         if self.meta['pca_wts'] == 'weighted':
             self.wts = pd.read_parquet(os.path.join(inpath, desc, 'PCA_wts.parquet'))
         else:
-            self.wts = pd.DataFrame(1, index=self.Z.index, columns=self.Z.columns)
+            self.wts = pd.DataFrame(1, index=pd.Index(range(1,13), name='month'),
+                                    columns=self.Z.columns)
 
         self.ecdf = kt.kdecdf(N=self.meta['std_N'], buffer_bws=self.meta['std_buffer_bws'],
                               method=self.meta['std_method'])
