@@ -292,7 +292,7 @@ class Weather():
             if verbose:
                 print('Saving stochastic output to disk...')
             for b in tqdm(PCs.index.unique(level='batch'), disable=self.tqdm):
-                PCs_batch = PCs.loc[b]
+                PCs_batch = PCs.loc[[b]]
                 Zgen = pd.concat([PC.dropna(axis=1) @ self.EOFs.loc[m]
                                   for m, PC in PCs_batch.groupby(level='month')]
                                   ).reorder_levels(PCs_batch.index.names).sort_index()
