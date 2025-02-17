@@ -458,7 +458,8 @@ class Weather():
 
 class Model():
     def __init__(self, normalise_PCs=False, ordern=1, orderx=1,
-                 bw_method='silverman_ref', bw_type='covariance', seed=42):
+                 bw_method='silverman_ref', bw_type='covariance', seed=42,
+                 verbose=False):
         """Fit and simulate from weather generator model.
 
         Parameters
@@ -478,11 +479,15 @@ class Model():
             'diagonal', 'equal'.
         seed : int, optional
             Seed or random number generator state variable.
+        verbose : bool, optional
+            Show tqdm toolbar during fitting and simulation, or not.
+            Defaults to False.
         """
 
         self.normalise_PCs = normalise_PCs
         self.model = sk.SCSKDE(ordern=ordern, orderx=orderx,
-                               bw_method=bw_method, bw_type=bw_type)
+                               bw_method=bw_method, bw_type=bw_type,
+                               verbose=verbose)
         self.rng = np.random.RandomState(seed)
         self.now = datetime.datetime.now()
         self.meta = {'normalise_PCs': normalise_PCs,
