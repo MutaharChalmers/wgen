@@ -192,27 +192,28 @@ class Weather():
         # Smooth using centred circular convolution of monthly climatology
         kwts = np.atleast_1d(kern)/sum(kern)
         kernel = np.roll(np.pad(kwts, (0, 12-kwts.size)), -(kwts.size//2))
-        clims = pd.DataFrame(cconv(clims_ref, kernel, axis=0),
-                             index=clims_ref.index, columns=clims_ref.columns)
+        clims_sm = pd.DataFrame(cconv(clims_ref, kernel, axis=0),
+                                index=clims_ref.index, columns=clims_ref.columns)
+        self.clims_sm = clims_sm
 
         # Make DataFrame of buffered monthly climatologies
-        clims_wrap = np.vstack([clims.loc[12], clims, clims.loc[1]])
+        clims_sm_wrap = np.vstack([clims_sm.loc[12], clims_sm, clims_sm.loc[1]])
 
         # Calculate extrema
-        extrema = np.diff(np.sign(np.diff(clims_wrap, axis=0)), axis=0)
+        extrema = np.diff(np.sign(np.diff(clims_sm_wrap, axis=0)), axis=0)
         maxima, minima = np.where(extrema<0, 1, 0), np.where(extrema>0, 1, 0)
         self.maxima, self.minima = maxima, minima
 
         # Calculate climatology threshold to identify in-season months
-        ceil = pd.concat([clims.where(maxima > 0)]*3).interpolate()[12:24]
-        floor = pd.concat([clims.where(minima > 0)]*3).interpolate()[12:24]
+        ceil = pd.concat([clims_sm.where(maxima > 0)]*3).interpolate()[12:24]
+        floor = pd.concat([clims_sm.where(minima > 0)]*3).interpolate()[12:24]
         thresh = (ceil - floor)*tol + floor
         self.ceil = ceil
         self.floor = floor
         self.thresh = thresh
 
         # Label seasons (in order) where climatology exceeds threshold
-        mask = (clims > thresh).astype(int)
+        mask = (clims_sm > thresh).astype(int)
         breaks = np.clip(np.diff(np.vstack([mask.loc[[12]], mask]), axis=0),
                          0, np.inf).cumsum(axis=0)
         self.seas = pd.DataFrame(np.where(breaks>0, breaks, breaks[-1]),
